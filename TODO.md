@@ -2,6 +2,26 @@
 
 Idées explorées avec Sami, pas encore commencées. Chaque item reste 100 % Rust.
 
+## Transcription — bug « Transcribe ne fait rien » (prioritaire)
+
+Constaté le 2026-10-12 : clic sur Texte ▸ Transcript ▸ Transcribe → rien ne se passe.
+- Cause : aucun modèle Whisper installé ; `transcript.generate` échoue (`NotInstalled`) et l'erreur
+  part seulement dans la barre d'état (`app.ui.status`, `crates/ui-egui/src/panels/text.rs` `run`).
+  Aucune UI n'appelle `transcript.downloadModel`.
+- Préférences actuelles (`%APPDATA%\FilmCraft\preferences.json`, `mediaAnalysis`) : langue `en`,
+  détection auto off, modèle `whisper-base` → le français serait transcrit comme de l'anglais.
+
+À faire :
+1. Déblocage : télécharger `whisper-small` (~985 Mo, huggingface.co/openai/whisper-small, SHA-256
+   vérifié) — demander l'OK de Sami avant — et régler `defaultLanguage: "fr"`,
+   `whisperModel: "whisper-small"`.
+2. Si le modèle manque au clic sur Transcribe : dialogue « Télécharger <modèle> (taille) ? » avec
+   barre de progression.
+3. Afficher les erreurs de transcription dans le panneau, pas seulement dans la barre d'état.
+4. Vérifier si `transcript.generate` tourne sur le fil de l'UI (il semble que oui → appli figée
+   pendant des minutes) ; si oui, le passer en tâche de fond avec progression et annulation.
+5. Défaut de langue `fr` pour ce fork (réglage, pas constante).
+
 ## Montage sur la musique
 
 ### Marquer les beats (`markers.markBeats`) — ~½ à 1 jour
