@@ -38,7 +38,7 @@ fn cache() -> &'static Mutex<Vec<(Key, Arc<Analysis>)>> {
 }
 
 /// The audio clip a menu command works on: the first selected clip on an audio track.
-fn selected_audio(s: &Session) -> Option<ClipId> {
+pub fn selected_audio(s: &Session) -> Option<ClipId> {
     let seq = s.active_sequence()?;
     s.state.selection.iter().copied().find(|c| seq.find_item(*c).and_then(|(t, _)| seq.track(t)).is_some_and(|t| t.kind == TrackKind::Audio))
 }
@@ -99,6 +99,12 @@ fn duration_p(s: &Session, p: &Value) -> Option<Tick> {
 
 /// Analysis of `[source_in, source_in + dur)` of the clip's media at the sequence rate (cached).
 fn analysis(s: &Session, item: ItemId, source_in: Tick, dur: Tick) -> Result<Arc<Analysis>> {
+    analysis_or(s, item, source_in, dur, |e| format!("cannot remix: {e}"))
+}
+
+/// [`analysis`] with the caller's wording for music that cannot be analysed (shared with
+/// Markers ▸ Mark Beats).
+pub(crate) fn analysis_or(s: &Session, item: ItemId, source_in: Tick, dur: Tick, fail: impl Fn(dsp::RemixError) -> String) -> Result<Arc<Analysis>> {
     let sr = s.active_sequence().map(|q| q.settings.sample_rate).unwrap_or(48_000).max(1);
     let m0 = source_in.to_units_floor(sr as i64);
     let len = (source_in + dur).to_units_floor(sr as i64) - m0;
@@ -110,7 +116,7 @@ fn analysis(s: &Session, item: ItemId, source_in: Tick, dur: Tick) -> Result<Arc
     let src = filmcraft_render::SourceProvider::source(&provider, item).ok_or_else(|| EngineError::Other("the clip's media is offline".into()))?;
     let buf = src.audio(m0, len.max(0) as usize, sr).map_err(|e| EngineError::Other(format!("reading the clip's audio: {e}")))?;
     let refs: Vec<&[f32]> = buf.channels.iter().map(Vec::as_slice).collect();
-    let a = Arc::new(dsp::analyze(&refs, sr).map_err(|e| EngineError::Other(format!("cannot remix: {e}")))?);
+    let a = Arc::new(dsp::analyze(&refs, sr).map_err(|e| EngineError::Other(fail(e)))?);
     let mut c = cache().lock().unwrap_or_else(|e| e.into_inner());
     c.push((key, a.clone()));
     if c.len() > 8 {

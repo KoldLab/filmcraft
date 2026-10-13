@@ -3563,3 +3563,10 @@
 	Export the labels to a preset file…	将标签导出为预设文件…
 	Show the presets folder	显示预设文件夹
 	Delete this preset	删除此预设
+	Mark Beats…	标记节拍…
+	Mark Beats	标记节拍
+	Density:	密度：
+	Only between In and Out	仅在入点和出点之间
+	Section starts (drops, breakdowns) are always marked; more density adds bars, then beats, strongest first.	段落开头（高潮、间奏）始终会被标记；提高密度会依次添加小节和节拍，强拍优先。
+	{bpm} BPM · {count} markers ({sections} sections)	{bpm} BPM · {count} 个标记（{sections} 个段落）
+	Added {count} beat markers	已添加 {count} 个节拍标记

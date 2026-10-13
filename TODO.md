@@ -24,20 +24,11 @@ Constaté le 2026-10-12 : clic sur Texte ▸ Transcript ▸ Transcribe → rien 
 
 ## Montage sur la musique
 
-### Marquer les beats (`markers.markBeats`) — ~½ à 1 jour
-Sélectionner la musique dans la timeline → Marqueurs ▸ Marquer les beats… → un marqueur de
-séquence sur chaque temps détecté. Le détecteur existe déjà : `crates/audio-dsp/src/remix.rs`
-(`analyze` : tempo 50–200 BPM + grille de beats), utilisé seulement par Clip ▸ Remix.
-
-Options :
-- Fréquence : chaque temps / tous les 2 / toutes les mesures (4) / toutes les 2 mesures.
-  Défaut proposé : **toutes les mesures** (à 120 BPM = un marqueur toutes les 2 s). À confirmer.
-- Plage : toute la musique / entre In et Out.
-- Décalage : ± quelques images (couper juste avant le temps).
-- Couleur de marqueur dédiée.
-
-Flux complet : marquer les beats → sélectionner les clips → Clip ▸ Automate to Sequence…
-avec `placement: unnumberedMarkers` (existe déjà, `crates/engine/src/project_tools.rs`).
+### Marquer les beats (`markers.markBeats`) — fait (branche `sami-beat-markers`)
+Marqueurs ▸ Marquer les beats… : slider Densité 0–100 avec compte en direct (0 = toutes les 4 mesures,
+50 = chaque mesure, 100 = chaque temps), décalage en images, seulement entre In et Out. Les débuts de
+section (changement de volume ≥ 3 dB : drop, refrain, break) sont toujours marqués, en orange (Mango).
+Flux : marquer les beats → sélectionner les clips → Clip ▸ Automate to Sequence… (`unnumberedMarkers`).
 
 ### Plus tard
 - Couper sur les temps forts (drops, caisse claire) via l'enveloppe d'onsets plutôt qu'une grille.

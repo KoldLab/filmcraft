@@ -3587,3 +3587,10 @@
 	Export the labels to a preset file…	ラベルをプリセットファイルに書き出し…
 	Show the presets folder	プリセットフォルダーを表示
 	Delete this preset	このプリセットを削除
+	Mark Beats…	ビートをマーク…
+	Mark Beats	ビートをマーク
+	Density:	密度:
+	Only between In and Out	イン点とアウト点の間のみ
+	Section starts (drops, breakdowns) are always marked; more density adds bars, then beats, strongest first.	セクションの始まり（ドロップ、ブレイク）は常にマークされます。密度を上げると小節、次に拍が強い順に追加されます。
+	{bpm} BPM · {count} markers ({sections} sections)	{bpm} BPM · マーカー {count} 個（セクション {sections} 個）
+	Added {count} beat markers	ビートマーカーを {count} 個追加しました

@@ -3585,3 +3585,10 @@
 	Export the labels to a preset file…	Exportar las etiquetas a un archivo de ajuste preestablecido…
 	Show the presets folder	Mostrar la carpeta de ajustes preestablecidos
 	Delete this preset	Eliminar este ajuste preestablecido
+	Mark Beats…	Marcar pulsos…
+	Mark Beats	Marcar pulsos
+	Density:	Densidad:
+	Only between In and Out	Solo entre la entrada y la salida
+	Section starts (drops, breakdowns) are always marked; more density adds bars, then beats, strongest first.	Los inicios de sección (drops, pausas) siempre se marcan; más densidad añade compases y luego pulsos, primero los más fuertes.
+	{bpm} BPM · {count} markers ({sections} sections)	{bpm} BPM · {count} marcadores ({sections} secciones)
+	Added {count} beat markers	Se añadieron {count} marcadores de pulso
