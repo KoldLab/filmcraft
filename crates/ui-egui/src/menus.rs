@@ -497,6 +497,11 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
             filmcraft_engine::find_command(id).map_or(Ok(()), |c| (c.enabled)(&app.session))?;
             return crate::panels::remix::open(app, ctx);
         }
+        // Mark Beats… from the menu opens the dialog; with params it marks directly.
+        "markers.markBeats" if params.as_object().is_none_or(|m| m.is_empty()) => {
+            filmcraft_engine::find_command(id).map_or(Ok(()), |c| (c.enabled)(&app.session))?;
+            return crate::panels::beat_markers::open(app, ctx);
+        }
         // Add Tracks… from the menu opens the dialog (new tracks after the last ones, as Premiere
         // offers); with params it adds the tracks directly.
         "sequence.addTracks" if params.as_object().is_none_or(|m| m.is_empty()) => {

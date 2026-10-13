@@ -115,6 +115,12 @@ pub struct Analysis {
     /// Beat self-similarity, `beats.len()²`, row-major; beat `i` is `[beats[i], beats[i + 1])`
     /// (the last runs to the end).
     pub sim: Vec<f32>,
+    /// Onset strength at each beat (the envelope's peak around it, in units of the envelope's
+    /// standard deviation): how hard the beat hits. Used by beat markers to rank accents.
+    pub strength: Vec<f32>,
+    /// Loudness of each beat (RMS of the mono mix over the beat, dBFS, floored at −120): finds
+    /// the drops and breakdowns beat markers call sections.
+    pub loudness: Vec<f32>,
 }
 
 impl Analysis {
@@ -456,13 +462,27 @@ pub fn analyze(channels: &[&[f32]], sample_rate: u32) -> Result<Analysis, RemixE
     // the flux of frame t peaks as soon as an attack enters the newer window, at about
     // t·hop + n − ¾·hop (measured on generated drums); joints sit half a crossfade earlier so a joint's fade is over
     // when the beat's attack starts
-    let mut beats: Vec<i64> =
-        frames.iter().map(|&t| (t * hop + n) as i64 - 3 * hop as i64 / 4 - beat_lead(sample_rate)).filter(|&b| b > 0 && b < len as i64).collect();
-    beats.dedup();
+    let mut placed: Vec<(i64, f32)> = frames
+        .iter()
+        .map(|&t| ((t * hop + n) as i64 - 3 * hop as i64 / 4 - beat_lead(sample_rate), local_max(&env, t, 2)))
+        .filter(|&(b, _)| b > 0 && b < len as i64)
+        .collect();
+    placed.dedup_by_key(|p| p.0);
+    let (beats, strength): (Vec<i64>, Vec<f32>) = placed.into_iter().unzip();
     if beats.len() < 2 * MIN_PIECE_BEATS + 2 {
         return Err(if beats.len() < 4 { RemixError::NoBeat } else { RemixError::TooShort });
     }
     let (chroma, cep) = beat_features(&mono, sample_rate, &beats);
+    let loudness: Vec<f32> = beats
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| {
+            let e = beats.get(i + 1).copied().unwrap_or(len as i64);
+            let seg = mono.get(b.max(0) as usize..(e.max(b) as usize).min(mono.len())).unwrap_or(&[]);
+            let ms = seg.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / seg.len().max(1) as f64;
+            (10.0 * ms.max(1e-12).log10()) as f32
+        })
+        .collect();
     let m = beats.len();
     let mut sim = vec![0f32; similarity_cells(m)?];
     for i in 0..m {
@@ -471,7 +491,7 @@ pub fn analyze(channels: &[&[f32]], sample_rate: u32) -> Result<Analysis, RemixE
         }
     }
     let period_s = period * hop as f64;
-    Ok(Analysis { sample_rate, len: len as i64, beats, period: period_s, bpm: 60.0 * sample_rate as f64 / period_s, sim })
+    Ok(Analysis { sample_rate, len: len as i64, beats, period: period_s, bpm: 60.0 * sample_rate as f64 / period_s, sim, strength, loudness })
 }
 
 // ------------------------------------------------------------------------------------- planning

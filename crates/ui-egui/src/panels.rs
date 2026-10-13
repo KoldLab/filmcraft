@@ -3,6 +3,7 @@
 
 pub mod audio_fx_editor;
 pub mod caption_export;
+pub mod beat_markers;
 pub mod clip_dialogs;
 pub mod color_dialogs;
 pub mod dialogs;

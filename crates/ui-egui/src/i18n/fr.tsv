@@ -3573,6 +3573,13 @@
 	Export the labels to a preset file…	Exporter les étiquettes dans un fichier de paramètre prédéfini…
 	Show the presets folder	Afficher le dossier des paramètres prédéfinis
 	Delete this preset	Supprimer ce paramètre prédéfini
+	Mark Beats…	Marquer les beats…
+	Mark Beats	Marquer les beats
+	Density:	Densité :
+	Only between In and Out	Seulement entre l'entrée et la sortie
+	Section starts (drops, breakdowns) are always marked; more density adds bars, then beats, strongest first.	Les débuts de section (drops, breaks) sont toujours marqués ; plus de densité ajoute les mesures, puis les beats, les plus forts d'abord.
+	{bpm} BPM · {count} markers ({sections} sections)	{bpm} BPM · {count} marqueurs ({sections} sections)
+	Added {count} beat markers	{count} marqueurs de beat ajoutés
 # View > Reset Interface Zoom (#2253).
 	Reset Interface Zoom	Réinitialiser le zoom de l'interface
 	Track Color	Couleur de la piste
