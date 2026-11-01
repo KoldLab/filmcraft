@@ -1,7 +1,7 @@
 //! Import mode (header "Import", also Home): large browser cards for importing media and demo footage,
 //! and the recent projects.
 
-use egui::{Align2, Color32, Rect, Sense, vec2};
+use egui::{Align2, Color32, Rect, Sense, pos2, vec2};
 use serde_json::json;
 
 use crate::FilmcraftApp;
