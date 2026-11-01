@@ -40,10 +40,10 @@ fn secs(v: &Value) -> Vec<f64> {
 }
 
 #[test]
-fn preview_changes_nothing_and_density_adds_markers() {
+fn preview_changes_nothing_and_shorter_shots_add_markers() {
     let (mut s, _) = session(0.0);
-    let few = s.execute(CMD, json!({"density": 0, "preview": true})).unwrap();
-    let many = s.execute(CMD, json!({"density": 100, "preview": true})).unwrap();
+    let few = s.execute(CMD, json!({"seconds": 8, "preview": true})).unwrap();
+    let many = s.execute(CMD, json!({"seconds": 0.5, "preview": true})).unwrap();
     assert!(few["markers"].as_u64() < many["markers"].as_u64(), "{few} {many}");
     assert!(markers(&s).is_empty());
 }
@@ -92,4 +92,53 @@ fn nothing_selected_is_refused() {
     let (mut s, _) = session(0.0);
     s.execute("timeline.select", json!({"clips": []})).unwrap();
     assert!(s.execute(CMD, json!({})).is_err());
+}
+
+#[test]
+fn shots_ask_for_one_cut_less() {
+    let (mut s, _) = session(0.0);
+    let v = s.execute(CMD, json!({"shots": 6, "preview": true})).unwrap();
+    assert_eq!(v["markers"].as_u64(), Some(5), "{v}");
+}
+
+/// Imports a generated video of `seconds`, selected in the Project panel with the others.
+fn add_clip(s: &mut Session, seconds: f64) -> u64 {
+    s.execute("file.newBlackVideo", json!({"seconds": seconds})).unwrap()["item"].as_u64().unwrap()
+}
+
+#[test]
+fn clips_fill_the_time_between_the_markers_and_the_music_stays() {
+    let (mut s, music) = session(0.0);
+    s.execute(CMD, json!({"shots": 3})).unwrap();
+    let cuts: Vec<Tick> = markers(&s).iter().map(|m| m.start).collect();
+    assert_eq!(cuts.len(), 2);
+    let items: Vec<u64> = vec![add_clip(&mut s, 60.0), add_clip(&mut s, 60.0), add_clip(&mut s, 0.5)];
+    s.state.project_selection = items.iter().map(|i| filmcraft_project::ItemId(*i)).collect();
+    let undo = s.history.undo.len();
+    let v = s.execute("clip.cutToMarkers", json!({})).unwrap();
+    assert_eq!(s.history.undo.len(), undo + 1);
+    assert_eq!(v["placed"].as_u64(), Some(3), "{v}");
+    assert_eq!(v["missing"].as_u64(), Some(0), "{v}");
+    assert_eq!(v["slowed"].as_u64(), Some(1), "{v}");
+    let q = s.active_sequence().unwrap();
+    let video: Vec<(Tick, Tick)> = q.video_tracks[0].items.iter().map(|i| (i.start, Tick(i.start.0 + i.duration.0))).collect();
+    assert_eq!(video.len(), 3, "{video:?}");
+    let frame = s.sequence_rate().tick_of(2).0;
+    assert!((video[0].1.0 - cuts[0].0).abs() <= frame, "{video:?} {cuts:?}");
+    assert!((video[1].0.0 - cuts[0].0).abs() <= frame, "{video:?} {cuts:?}");
+    assert!((video[2].0.0 - cuts[1].0).abs() <= frame, "{video:?} {cuts:?}");
+    let (_, it) = q.find_item(music).unwrap();
+    assert!((video[2].1.0 - (it.start.0 + it.duration.0)).abs() <= frame, "the slowed clip reaches the end");
+    assert_eq!(it.start, Tick::ZERO, "the music did not move");
+}
+
+#[test]
+fn missing_clips_are_counted() {
+    let (mut s, _) = session(0.0);
+    s.execute(CMD, json!({"shots": 4})).unwrap();
+    let item = add_clip(&mut s, 60.0);
+    s.state.project_selection = vec![filmcraft_project::ItemId(item)];
+    let v = s.execute("clip.cutToMarkers", json!({})).unwrap();
+    assert_eq!(v["placed"].as_u64(), Some(1));
+    assert_eq!(v["missing"].as_u64(), Some(3));
 }

@@ -96,7 +96,7 @@ fn mark_beats_dialog_counts_live_and_marks() {
     let r = d.ok("ui.menu.invoke", json!({"id": "markers.markBeats"}));
     assert_eq!(r["dialog"], "markBeats");
     d.frames(3);
-    for id in ["density", "offset", "inOut", "info", "ok", "cancel"] {
+    for id in ["seconds", "useShots", "shots", "offset", "inOut", "info", "ok", "cancel"] {
         d.element(&format!("markBeats.{id}"));
     }
     // default density: one peak per 2 s of the 32 s of music
@@ -108,15 +108,14 @@ fn mark_beats_dialog_counts_live_and_marks() {
     d.frames(3);
     assert!(d.ids("markBeats.").is_empty());
     assert_eq!(d.markers(), 0);
-    // reopen, push the slider to the far right: the count follows live, OK adds exactly that many
+    // reopen, push the slider to the left: the count follows live, OK adds exactly that many
     d.ok("ui.menu.invoke", json!({"id": "markers.markBeats"}));
     d.frames(3);
-    let r = d.element("markBeats.density")["rect"].clone();
+    let r = d.element("markBeats.seconds")["rect"].clone();
     let (x, y, w, h) = (r[0].as_f64().unwrap(), r[1].as_f64().unwrap(), r[2].as_f64().unwrap(), r[3].as_f64().unwrap());
-    // the track is the first 100 px of the widget (the "Fewer · More" text follows it)
-    d.ok("ui.click", json!({"x": x + 90.0_f64.min(w), "y": y + h / 2.0}));
+    d.ok("ui.click", json!({"x": x + 8.0_f64.min(w), "y": y + h / 2.0}));
     d.frames(3);
-    assert!(d.element("markBeats.density")["label"].as_str().unwrap().parse::<f64>().unwrap() > 50.0);
+    assert!(d.element("markBeats.seconds")["label"].as_str().unwrap().parse::<f64>().unwrap() < 2.0);
     let info = d.element("markBeats.info")["label"].as_str().unwrap().to_string();
     let dense = announced(&info);
     assert!(dense > per_bar, "{info}");

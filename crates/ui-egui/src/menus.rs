@@ -502,6 +502,18 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
             filmcraft_engine::find_command(id).map_or(Ok(()), |c| (c.enabled)(&app.session))?;
             return crate::panels::beat_markers::open(app, ctx);
         }
+        // Cut Clips to Markers says what it did, and how many clips are missing.
+        "clip.cutToMarkers" => {
+            let v = app.session.execute(id, params).map_err(|e| e.to_string())?;
+            let missing = v["missing"].as_u64().unwrap_or(0);
+            let placed = v["placed"].as_u64().unwrap_or(0).to_string();
+            app.ui.status = if missing > 0 {
+                tlf!("{placed} clips placed, {missing} more needed", placed = placed, missing = missing.to_string())
+            } else {
+                tlf!("{placed} clips placed", placed = placed)
+            };
+            return Ok(v);
+        }
         // Add Tracks… from the menu opens the dialog (new tracks after the last ones, as Premiere
         // offers); with params it adds the tracks directly.
         "sequence.addTracks" if params.as_object().is_none_or(|m| m.is_empty()) => {

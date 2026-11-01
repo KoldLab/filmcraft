@@ -253,7 +253,7 @@ pub(crate) fn apply_layout(v: &mut Vec<CommandSpec>) {
         (At::After("sequence.showThroughEdits"), vec!["sequence.normalizeMixTrack"]),
         (At::After("sequence.makeSubsequence"), vec!["sequence.transcribe", "sequence.simplify"]),
         (At::After("captions.showAll"), vec!["captions.showActiveOnly"]),
-        (At::After("markers.addChapter"), vec!["markers.addFlashCue", "markers.markBeats"]),
+        (At::After("markers.addChapter"), vec!["markers.addFlashCue", "markers.markBeats", "clip.cutToMarkers"]),
         (At::Before("file.close"), vec!["file.open"]),
         (At::After("media.makeOffline"), vec!["file.importFromMediaBrowser", "file.import", "file.importImageSequence"]),
     ];

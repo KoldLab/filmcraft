@@ -3577,8 +3577,6 @@
 	Mark Beats	Marquer les beats
 	Density:	Densité :
 	Only between In and Out	Seulement entre l'entrée et la sortie
-	Markers land on the strongest sounds of the music. More density adds quieter ones; level changes are always marked.	Les marqueurs se placent sur les sons les plus forts de la musique. Plus de densité ajoute les plus discrets ; les changements de niveau sont toujours marqués.
-	{count} markers ({sections} sections)	{count} marqueurs ({sections} sections)
 	Added {count} beat markers	{count} marqueurs de beat ajoutés
 # View > Reset Interface Zoom (#2253).
 	Reset Interface Zoom	Réinitialiser le zoom de l'interface
@@ -3636,3 +3634,10 @@
 	{model} is needed to transcribe. Download it now ({size} MB)?	{model} est nécessaire pour transcrire. Le télécharger maintenant ({size} Mo) ?
 	It comes from huggingface.co and is checked before use. This happens once.	Il vient de huggingface.co et il est vérifié avant utilisation. Cela n'arrive qu'une fois.
 	Starting…	Démarrage…
+	Blue: cuts. Pink: the strongest hits, for effects. Orange: level changes, for transitions. Then select your clips and run Cut Clips to Markers.	Bleu : coupes. Rose : les coups les plus forts, pour les effets. Orange : changements de niveau, pour les transitions. Sélectionne ensuite tes clips et lance Couper les clips sur les marqueurs.
+	{count} markers: {effects} effects, {sections} transitions	{count} marqueurs : {effects} effets, {sections} transitions
+	One shot every:	Un plan toutes les :
+	Number of clips:	Nombre de clips :
+	Cut Clips to Markers	Couper les clips sur les marqueurs
+	{placed} clips placed, {missing} more needed	{placed} clips placés, il en manque {missing}
+	{placed} clips placed	{placed} clips placés

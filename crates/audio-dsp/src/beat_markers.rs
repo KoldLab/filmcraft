@@ -1,5 +1,5 @@
 //! Sound peaks: find the places where the music hits, without assuming a tempo, then pick as many
-//! as a density slider asks for (Markers ▸ Mark Beats…). Works on free-time music as well as on
+//! as the edit needs (Markers ▸ Mark Beats…). Works on free-time music as well as on
 //! steady drums, because no beat grid is involved.
 //!
 //! ```text
@@ -7,17 +7,18 @@
 //!   peak: a local maximum over ±120 ms, above the mean + 1.5 σ of the ±1.5 s around it
 //!   strength: its height relative to the strongest peak, 0…1
 //!   sections: where the mean level of the next 8 s differs from the last 8 s by ≥ 3 dB
-//! select(density): spacing g = 8 · 2^(−density/25) seconds, keep the strongest peaks at least
-//!   g/2 apart until there are duration / g of them; section changes always come first
+//! select(seconds): keep the strongest peaks at least seconds/2 apart, about one per `seconds`;
+//!   section changes always come first
+//! select_shots(n): the same for exactly n − 1 cuts, so n clips fill the music
 //! ```
 //!
-//! | density | spacing | 3 min 40 of music |
-//! |---|---|---|
-//! | 0 | 8 s | ≈ 27 markers |
-//! | 25 | 4 s | ≈ 55 |
-//! | 50 | 2 s | ≈ 110 |
-//! | 75 | 1 s | ≈ 220 (if the music has that many peaks) |
-//! | 100 | 0.5 s | ≈ 440 (same) |
+//! | a shot every | 3 min 40 of music |
+//! |---|---|
+//! | 8 s | ≈ 27 markers |
+//! | 4 s | ≈ 55 |
+//! | 2 s | ≈ 110 |
+//! | 1 s | ≈ 220 (if the music has that many peaks) |
+//! | 0.5 s | ≈ 440 (same) |
 //!
 //! Everything is deterministic.
 
@@ -33,6 +34,9 @@ const THRESHOLD_SIGMAS: f32 = 1.5;
 const MIN_HEIGHT: f32 = 1.0;
 /// A peak quieter than this fraction of the loudest one (−30 dB) is background noise.
 const MIN_LEVEL: f32 = 0.03;
+/// Limits of the spacing between two shots (seconds).
+pub const MIN_SPACING: f64 = 0.5;
+pub const MAX_SPACING: f64 = 8.0;
 /// Length of one loudness block (seconds).
 const BLOCK: f64 = 0.5;
 /// Blocks of loudness compared on each side of a candidate section change (8 s).
@@ -41,6 +45,9 @@ const WINDOW: usize = 16;
 const MIN_CHANGE_DB: f32 = 3.0;
 /// A section change takes the strongest peak this close to it (seconds).
 const SECTION_SNAP: f64 = 1.0;
+
+/// From this relative strength a peak is worth an effect, not only a cut.
+const EFFECT_STRENGTH: f32 = 0.7;
 
 /// One place where the music hits.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -51,6 +58,19 @@ pub struct Peak {
     pub strength: f32,
     /// A section change: the music gets clearly louder or quieter here.
     pub section: bool,
+}
+
+impl Peak {
+    /// What the peak is good for: `"transition"`, `"effect"` or `"cut"`.
+    pub fn kind(&self) -> &'static str {
+        if self.section {
+            "transition"
+        } else if self.strength >= EFFECT_STRENGTH {
+            "effect"
+        } else {
+            "cut"
+        }
+    }
 }
 
 /// The peaks of a piece of music, in time order.
@@ -176,24 +196,14 @@ pub fn analyze(channels: &[&[f32]], sample_rate: u32) -> PeakMap {
     map
 }
 
-/// Spacing (seconds) the density slider asks for: 8 at 0, 2 at 50, 0.5 at 100.
-pub fn spacing(density: f64) -> f64 {
-    let d = if density.is_finite() { density.clamp(0.0, 100.0) } else { 50.0 };
-    8.0 * 2f64.powf(-d / 25.0)
-}
-
-/// The peaks to mark at `density` (0 … 100), in time order.
-pub fn select(map: &PeakMap, density: f64) -> Vec<Peak> {
-    let sr = f64::from(map.sample_rate.max(1));
-    let sp = spacing(density);
-    let target = ((map.samples as f64 / sr / sp).round() as usize).max(1);
-    let gap = (sp / 2.0 * sr) as i64;
+/// The `target` best peaks at least `gap` samples apart, in time order: section changes first,
+/// then the strongest; equal scores in time order.
+fn pick(map: &PeakMap, target: usize, gap: i64, keep_sections: bool) -> Vec<Peak> {
     let mut order: Vec<&Peak> = map.peaks.iter().collect();
-    // section changes first, then the strongest; equal scores in time order
     order.sort_by(|a, b| b.section.cmp(&a.section).then(b.strength.total_cmp(&a.strength)).then(a.pos.cmp(&b.pos)));
     let mut taken: Vec<Peak> = Vec::new();
     for p in order {
-        if taken.len() >= target && !p.section {
+        if taken.len() >= target && !(keep_sections && p.section) {
             break;
         }
         if taken.iter().all(|t| (t.pos - p.pos).abs() >= gap) {
@@ -202,6 +212,28 @@ pub fn select(map: &PeakMap, density: f64) -> Vec<Peak> {
     }
     taken.sort_by_key(|p| p.pos);
     taken
+}
+
+/// Length of the music in seconds.
+fn length(map: &PeakMap) -> f64 {
+    map.samples as f64 / f64::from(map.sample_rate.max(1))
+}
+
+/// About one peak per `seconds`, in time order. Section changes are always kept.
+pub fn select(map: &PeakMap, seconds: f64) -> Vec<Peak> {
+    let s = if seconds.is_finite() { seconds.clamp(MIN_SPACING, MAX_SPACING) } else { 2.0 };
+    let target = ((length(map) / s).round() as usize).max(1);
+    pick(map, target, (s / 2.0 * f64::from(map.sample_rate)) as i64, true)
+}
+
+/// The `shots − 1` best cuts, so that `shots` clips fill the music.
+pub fn select_shots(map: &PeakMap, shots: usize) -> Vec<Peak> {
+    let cuts = shots.saturating_sub(1);
+    if cuts == 0 {
+        return Vec::new();
+    }
+    let s = length(map) / shots as f64;
+    pick(map, cuts, (s / 2.0 * f64::from(map.sample_rate)) as i64, false)
 }
 
 #[cfg(test)]
@@ -237,12 +269,21 @@ mod tests {
     }
 
     #[test]
-    fn spacing_follows_the_slider() {
-        assert_eq!(spacing(0.0), 8.0);
-        assert_eq!(spacing(50.0), 2.0);
-        assert_eq!(spacing(100.0), 0.5);
-        assert_eq!(spacing(-5.0), 8.0);
-        assert_eq!(spacing(f64::NAN), 2.0);
+    fn shots_give_one_cut_less_than_clips() {
+        let list: Vec<(f64, f32)> = (0..20).map(|i| (1.0 + f64::from(i) * 1.1, 0.1 + 0.02 * i as f32)).collect();
+        let x = hits(24.0, &list);
+        let map = analyze(&[&x], SR);
+        assert_eq!(select_shots(&map, 8).len(), 7);
+        assert!(select_shots(&map, 1).is_empty());
+        assert!(select_shots(&map, 0).is_empty());
+    }
+
+    #[test]
+    fn strong_peaks_are_effects_and_section_changes_are_transitions() {
+        let quiet = Peak { pos: 0, strength: 0.3, section: false };
+        assert_eq!(quiet.kind(), "cut");
+        assert_eq!(Peak { strength: 0.9, ..quiet }.kind(), "effect");
+        assert_eq!(Peak { section: true, ..quiet }.kind(), "transition");
     }
 
     #[test]
@@ -252,7 +293,7 @@ mod tests {
         let list: Vec<(f64, f32)> = times.iter().map(|&t| (t, 0.5)).collect();
         let x = hits(18.0, &list);
         let map = analyze(&[&x], SR);
-        let chosen = select(&map, 50.0);
+        let chosen = select(&map, 2.0);
         for t in times {
             assert!(near(&chosen, t), "no marker at {t} s: {chosen:?}");
         }
@@ -266,7 +307,7 @@ mod tests {
         list[9].1 = 0.8;
         let x = hits(24.0, &list);
         let map = analyze(&[&x], SR);
-        let sparse = select(&map, 0.0);
+        let sparse = select(&map, 8.0);
         assert!(sparse.len() <= 4, "{sparse:?}");
         assert!(near(&sparse, list[3].0) && near(&sparse, list[9].0), "{sparse:?}");
     }
@@ -281,15 +322,15 @@ mod tests {
         assert_eq!(sections.len(), 1, "{sections:?}");
         let at = sections[0].pos as f64 / f64::from(SR);
         assert!((at - 16.0).abs() < 1.5, "section at {at} s");
-        assert!(select(&map, 0.0).iter().any(|p| p.section));
+        assert!(select(&map, 8.0).iter().any(|p| p.section));
     }
 
     #[test]
-    fn more_density_never_means_fewer_markers() {
+    fn a_shorter_spacing_gives_more_markers() {
         let list: Vec<(f64, f32)> = (0..40).map(|i| (0.5 + f64::from(i) * 0.61, 0.1 + 0.01 * i as f32)).collect();
         let x = hits(26.0, &list);
         let map = analyze(&[&x], SR);
-        let (few, many) = (select(&map, 0.0).len(), select(&map, 100.0).len());
+        let (few, many) = (select(&map, 8.0).len(), select(&map, 0.5).len());
         assert!(few < many, "{few} !< {many}");
     }
 
@@ -300,6 +341,6 @@ mod tests {
         assert!(analyze(&[&quiet], SR).peaks.is_empty());
         assert!(analyze(&[&quiet], 0).peaks.is_empty());
         let map = PeakMap { peaks: Vec::new(), sample_rate: 0, samples: 0 };
-        assert!(select(&map, 50.0).is_empty());
+        assert!(select(&map, 2.0).is_empty());
     }
 }

@@ -1,29 +1,32 @@
-//! Markers ▸ Mark Beats…: sequence markers on the peaks of a music clip, as many as a density
-//! slider asks for, the strongest first (analysis in [`filmcraft_audio_dsp::beat_markers`]).
+//! Markers ▸ Mark Beats…: sequence markers on the peaks of a music clip, a marker every few seconds
+//! or exactly what a number of shots needs (analysis in [`filmcraft_audio_dsp::beat_markers`]).
+//! Markers ▸ Cut Clips to Markers then fills the time between the markers with the clips selected
+//! in the Project panel, without touching the music.
 //!
 //! | param | default | |
 //! |---|---|---|
 //! | `clip` | the selected audio clip | the music |
-//! | `density` | 50 | 0 = one peak per 8 s … 50 = one per 2 s … 100 = one per 0.5 s |
+//! | `seconds` | 2 | a shot about every 0.5 … 8 seconds |
+//! | `shots` | | instead of `seconds`: the cuts that make this many shots |
 //! | `offsetFrames` | 0 | move every marker (negative = before the peak, to cut just ahead of it) |
 //! | `range` | `"clip"` | `"inOut"`: only between the sequence In and Out |
-//! | `color` / `sectionColor` | Teal / Mango | marker colours (section changes get their own) |
+//! | `color` / `sectionColor` | Teal / Mango | colours of cuts and transitions; effects are Rose |
 //! | `replace` | true | first remove the markers an earlier Mark Beats put in the range |
 //! | `preview` | false | report what would be marked without changing anything (the dialog's live count) |
 //!
-//! Markers are Comment markers snapped to the nearest frame; section changes are named
-//! "Section 1", "Section 2"…; every marker's comment starts with `Mark Beats`, which is how
-//! `replace` finds them. One undo step. Pair with Clip ▸ Automate to Sequence (placement: unnumbered
-//! markers) to cut clips on the music.
+//! Markers are Comment markers snapped to the nearest frame; level changes are named
+//! "Transition 1", "Transition 2"…; every marker's comment starts with `Mark Beats`, which is how
+//! `replace` finds them. One undo step.
 
 use std::sync::{Arc, Mutex, OnceLock};
 
 use filmcraft_audio_dsp::beat_markers::{self as dsp, PeakMap};
+use filmcraft_edit as edit;
 use filmcraft_project::{ClipId, ItemId, ItemKind, Label, Marker, MarkerId, MarkerKind, TrackKind};
-use filmcraft_time::Tick;
+use filmcraft_time::{Tick, TimeRange};
 use serde_json::{Value, json};
 
-use crate::commands::{CommandSpec, bad, f64_p, has_seq, marker_color_p, str_p, u64_p};
+use crate::commands::{CommandSpec, ItemPlacement, bad, f64_p, has_seq, marker_color_p, str_p, u64_p};
 use crate::{EngineError, Result, Session};
 
 pub(crate) const CMD: &str = "markers.markBeats";
@@ -33,6 +36,9 @@ pub const TAG: &str = "Mark Beats";
 const MAX_SECONDS: f64 = 20.0 * 60.0;
 /// Clip analyses kept, so the dialog's live preview does not analyse again.
 const CACHED: usize = 8;
+/// Colour of the markers on the strongest peaks.
+const EFFECT_COLOR: Label = Label::Rose;
+const CUT_CMD: &str = "clip.cutToMarkers";
 
 type Key = (u64, i64, i64, u32);
 
@@ -97,9 +103,10 @@ fn peaks_of(s: &Session, item: ItemId, source_in: Tick, dur: Tick, sr: u32) -> R
     Ok(map)
 }
 
-/// One marker to add: sequence time, section number (1-based) for section changes.
+/// One marker to add: sequence time, kind, number (1-based) for transitions.
 struct Planned {
     time: Tick,
+    kind: &'static str,
     section: Option<usize>,
 }
 
@@ -123,10 +130,11 @@ fn plan(s: &Session, p: &Value) -> Result<(Vec<Planned>, (Tick, Tick), usize)> {
         }
         other => return Err(bad(CMD, format!("unknown range {other:?}; use \"clip\" or \"inOut\""))),
     }
-    let density = f64_p(p, "density").unwrap_or(50.0);
-    if !density.is_finite() {
-        return Err(bad(CMD, "`density` must be a number from 0 to 100"));
+    let seconds = f64_p(p, "seconds").unwrap_or(2.0);
+    if !seconds.is_finite() {
+        return Err(bad(CMD, "`seconds` must be a number"));
     }
+    let shots = u64_p(p, "shots").map(|n| n.clamp(1, 100_000) as usize);
     let offset_frames = p.get("offsetFrames").and_then(Value::as_i64).unwrap_or(0).clamp(-1_000, 1_000);
     let rate = s.sequence_rate();
     let offset = Tick(rate.tick_of(offset_frames.abs()).0.saturating_mul(offset_frames.signum()));
@@ -136,7 +144,11 @@ fn plan(s: &Session, p: &Value) -> Result<(Vec<Planned>, (Tick, Tick), usize)> {
     let m0 = source_in.to_units_floor(i64::from(sr));
     let mut out: Vec<Planned> = Vec::new();
     let mut sections = 0usize;
-    for b in dsp::select(&map, density) {
+    let chosen = match shots {
+        Some(n) => dsp::select_shots(&map, n),
+        None => dsp::select(&map, seconds),
+    };
+    for b in chosen {
         let media = Tick::from_units(m0.saturating_add(b.pos), i64::from(sr));
         let t = Tick(start.0.saturating_add(media.0.saturating_sub(source_in.0)).saturating_add(offset.0));
         let t = rate.snap_nearest(t);
@@ -147,7 +159,7 @@ fn plan(s: &Session, p: &Value) -> Result<(Vec<Planned>, (Tick, Tick), usize)> {
             sections += 1;
             sections
         });
-        out.push(Planned { time: t, section });
+        out.push(Planned { time: t, kind: b.kind(), section });
     }
     Ok((out, range, map.peaks.len()))
 }
@@ -157,6 +169,7 @@ fn report(planned: &[Planned], peaks: usize) -> Value {
         "peaks": peaks,
         "markers": planned.len(),
         "sections": planned.iter().filter(|m| m.section.is_some()).count(),
+        "effects": planned.iter().filter(|m| m.kind == "effect").count(),
         "times": planned.iter().map(|m| m.time.0).collect::<Vec<_>>(),
     })
 }
@@ -182,10 +195,13 @@ fn mark(s: &mut Session, p: &Value) -> Result<Value> {
         }
         for m in &planned {
             let id = MarkerId(ctx.alloc());
-            let name = m.section.map(|n| format!("Section {n}")).unwrap_or_default();
-            let kind = if m.section.is_some() { "section" } else { "peak" };
-            let comment = format!("{TAG} · {kind}");
-            let color = if m.section.is_some() { section_color } else { color };
+            let name = m.section.map(|n| format!("Transition {n}")).unwrap_or_default();
+            let comment = format!("{TAG} · {}", m.kind);
+            let color = match m.kind {
+                "transition" => section_color,
+                "effect" => EFFECT_COLOR,
+                _ => color,
+            };
             q.markers.push(Marker { id, start: m.time, duration: Tick(0), name, comment, kind: MarkerKind::Comment, color });
         }
         q.markers.sort_by_key(|m| m.start);
@@ -195,15 +211,129 @@ fn mark(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(v)
 }
 
+fn can_cut(s: &Session) -> std::result::Result<(), String> {
+    has_seq(s)?;
+    if s.state.project_selection.is_empty() {
+        return Err("select your clips in the Project panel".into());
+    }
+    if s.active_sequence().is_none_or(|q| q.markers.is_empty()) {
+        return Err("the sequence has no markers: run Mark Beats first".into());
+    }
+    Ok(())
+}
+
+/// The shots the markers make: from the start of the music to its end, cut at every marker.
+fn shots(s: &Session) -> Result<Vec<(Tick, Tick)>> {
+    let q = s.active_sequence().ok_or(EngineError::NoSequence)?;
+    let rate = s.sequence_rate();
+    let first = q.audio_tracks.iter().flat_map(|t| t.items.iter()).map(|i| i.start).min().unwrap_or(Tick::ZERO);
+    let end = q.audio_tracks.iter().map(|t| t.end()).max().filter(|e| *e > first).unwrap_or_else(|| q.duration());
+    let mut cuts: Vec<Tick> =
+        q.markers.iter().filter(|m| m.kind == MarkerKind::Comment).map(|m| rate.snap(m.start)).filter(|t| *t > first && *t < end).collect();
+    cuts.push(first);
+    cuts.push(end);
+    cuts.sort();
+    cuts.dedup();
+    Ok(cuts.windows(2).filter_map(|w| Some((*w.first()?, *w.get(1)?))).collect())
+}
+
+/// Each selected clip fills one shot on the video track: a long clip is cut at the next marker, a
+/// short one is slowed down until it reaches it. The audio tracks do not change. One undo step.
+fn cut_to_markers(s: &mut Session, _: &Value) -> Result<Value> {
+    let vdest = s.targeting().video_dest.ok_or_else(|| bad(CUT_CMD, "no video track is targeted"))?;
+    let mut order = Vec::new();
+    s.project.root.all_items(&mut order);
+    let seq = s.state.active_sequence.ok_or(EngineError::NoSequence)?;
+    let mut items: Vec<ItemId> = s.state.project_selection.iter().copied().filter(|i| *i != seq && s.project.source_streams(*i).0).collect();
+    items.sort_by_key(|i| order.iter().position(|x| x == i).unwrap_or(usize::MAX));
+    if items.is_empty() {
+        return Err(bad(CUT_CMD, "select video clips in the Project panel"));
+    }
+    let segments = shots(s)?;
+    let (Some(start), Some(end)) = (segments.first().map(|x| x.0), segments.last().map(|x| x.1)) else {
+        return Err(bad(CUT_CMD, "the sequence has no room between its markers"));
+    };
+    let n0 = s.history.undo.len();
+    // a new attempt replaces the previous one instead of colliding with it
+    s.edit_sequence("Cut Clips to Markers", |q, _, _| {
+        if let Some(t) = q.video_tracks.iter_mut().find(|t| t.id == vdest) {
+            t.items.retain(|i| i.start < start || i.start >= end);
+        }
+        Ok(())
+    })?;
+    let still_duration = s.prefs.timeline.still_duration(s.sequence_rate());
+    let mut placed: Vec<ClipId> = Vec::new();
+    let mut slowed = 0usize;
+    let mut failure = None;
+    for (item, (from, to)) in items.iter().zip(&segments) {
+        let wanted = Tick(to.0.saturating_sub(from.0));
+        let Some(r) = crate::clip_ops::item_range(&s.project, *item, still_duration) else { continue };
+        let still = s.project.item(*item).and_then(|i| i.as_media()).is_some_and(|m| matches!(m.info.kind, filmcraft_media::MediaKind::Still));
+        let range = if still || r.duration >= wanted { TimeRange::new(r.start, wanted) } else { r };
+        let short = !still && r.duration < wanted;
+        let ids = match crate::commands::place_item(
+            s,
+            ItemPlacement { item: *item, range, at: *from, vdest: Some(vdest), adest: None, insert: false, label: "Cut Clips to Markers", audio_split: None },
+        ) {
+            Ok(ids) => ids,
+            Err(e) => {
+                failure = Some(e);
+                break;
+            }
+        };
+        if short {
+            let speed = r.duration.0 as f64 / wanted.0.max(1) as f64;
+            let edited = s.edit_sequence("Cut Clips to Markers", |q, ctx, _| {
+                edit::set_speed_group(q, &ids, speed, false, false, ctx)?;
+                Ok(())
+            });
+            if let Err(e) = edited {
+                failure = Some(e);
+                break;
+            }
+            slowed += 1;
+        }
+        placed.extend(ids);
+    }
+    if let Some(e) = failure {
+        while s.history.undo.len() > n0 {
+            s.undo();
+        }
+        s.history.redo.clear();
+        return Err(e);
+    }
+    crate::clip_ops::collapse_history(s, n0, "Cut Clips to Markers");
+    s.state.selection = placed.clone();
+    Ok(json!({
+        "placed": placed.len(),
+        "shots": segments.len(),
+        "missing": segments.len().saturating_sub(placed.len()),
+        "slowed": slowed,
+        "clips": placed.iter().map(|c| c.0).collect::<Vec<_>>(),
+    }))
+}
+
 pub fn commands() -> Vec<CommandSpec> {
-    vec![CommandSpec {
-        id: CMD,
-        label: "Mark Beats…",
-        menu: &["Markers"],
-        shortcut: None,
-        params: r#"{"clip":id?,"density":0..100?,"offsetFrames":i64?,"range":"clip"|"inOut"?,"color":label?,"sectionColor":label?,"replace":bool?,"preview":bool?}"#,
-        enabled: can_mark,
-        run: mark,
-        journal: true,
-    }]
+    vec![
+        CommandSpec {
+            id: CMD,
+            label: "Mark Beats…",
+            menu: &["Markers"],
+            shortcut: None,
+            params: r#"{"clip":id?,"seconds":0.5..8?,"shots":u64?,"offsetFrames":i64?,"range":"clip"|"inOut"?,"color":label?,"sectionColor":label?,"replace":bool?,"preview":bool?}"#,
+            enabled: can_mark,
+            run: mark,
+            journal: true,
+        },
+        CommandSpec {
+            id: CUT_CMD,
+            label: "Cut Clips to Markers",
+            menu: &["Markers"],
+            shortcut: None,
+            params: "{}",
+            enabled: can_cut,
+            run: cut_to_markers,
+            journal: true,
+        },
+    ]
 }
