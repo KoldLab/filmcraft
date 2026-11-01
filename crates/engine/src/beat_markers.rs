@@ -179,10 +179,10 @@ fn mark(s: &mut Session, p: &Value) -> Result<Value> {
     if p.get("preview").and_then(Value::as_bool).unwrap_or(false) {
         return Ok(report(&planned, peaks));
     }
-    let color = marker_color_p(p, CMD)?.unwrap_or(Label::Teal);
+    let color = marker_color_p(p, CMD)?.map_or(Label::Teal, |c| c.0);
     let section_color = match p.get("sectionColor") {
         None | Some(Value::Null) => Label::Mango,
-        Some(v) => marker_color_p(&json!({"color": v}), CMD)?.unwrap_or(Label::Mango),
+        Some(v) => marker_color_p(&json!({"color": v}), CMD)?.map_or(Label::Mango, |c| c.0),
     };
     let replace = p.get("replace").and_then(Value::as_bool).unwrap_or(true);
     let mut v = report(&planned, peaks);
@@ -202,7 +202,18 @@ fn mark(s: &mut Session, p: &Value) -> Result<Value> {
                 "effect" => EFFECT_COLOR,
                 _ => color,
             };
-            q.markers.push(Marker { id, start: m.time, duration: Tick(0), name, comment, kind: MarkerKind::Comment, color });
+            q.markers.push(Marker {
+                id,
+                start: m.time,
+                duration: Tick(0),
+                name,
+                comment,
+                kind: MarkerKind::Comment,
+                color,
+                custom_color: None,
+                author: Default::default(),
+                url: Default::default(),
+            });
         }
         q.markers.sort_by_key(|m| m.start);
         Ok(())
