@@ -3612,8 +3612,8 @@
 	Mark Beats	Marcar pulsos
 	Density:	Densidad:
 	Only between In and Out	Solo entre la entrada y la salida
-	Section starts (drops, breakdowns) are always marked; more density adds bars, then beats, strongest first.	Los inicios de sección (drops, pausas) siempre se marcan; más densidad añade compases y luego pulsos, primero los más fuertes.
-	{bpm} BPM · {count} markers ({sections} sections)	{bpm} BPM · {count} marcadores ({sections} secciones)
+	Markers land on the strongest sounds of the music. More density adds quieter ones; level changes are always marked.	Los marcadores se colocan en los sonidos más fuertes de la música. Más densidad añade los más suaves; los cambios de nivel siempre se marcan.
+	{count} markers ({sections} sections)	{count} marcadores ({sections} secciones)
 	Added {count} beat markers	Se añadieron {count} marcadores de pulso
 	Opens in your web browser: {url}	Se abre en el navegador web: {url}
 	Saves this session's log and shows it in your file manager.	Guarda el registro de esta sesión y lo muestra en el explorador de archivos.

@@ -1,325 +1,305 @@
-//! Beat markers: rank the beats of a piece of music by how good a place to cut each one is, then
-//! pick as many as a density slider asks for (Markers ▸ Mark Beats…).
+//! Sound peaks: find the places where the music hits, without assuming a tempo, then pick as many
+//! as a density slider asks for (Markers ▸ Mark Beats…). Works on free-time music as well as on
+//! steady drums, because no beat grid is involved.
 //!
 //! ```text
-//! remix::analyze ─► beats, beat self-similarity, onset strength and loudness per beat
-//!   downbeat: the bar phase (0…3) where the harmony / timbre changes most (chords change on bars)
-//!   sections: where the loudness of the two bars after a beat differs from the two bars before
-//!             by ≥ 3 dB (a drop, a chorus coming in, a breakdown), snapped to the nearest downbeat
-//!   level of each beat, counting bars from the last section start:
-//!     Section > Phrase (every 4 bars) > TwoBars > Bar > HalfBar (beat 3) > Beat
-//!   score = level + accent (the beat's onset strength, 0…1)
-//! select(density): spacing g = 16 · 2^(−density/25) beats; take the beats of every level at
-//!   least as coarse as the nearest power of two ≤ g, best score first, until there are
-//!   beats / g of them
+//! mono mix ─► remix::onset_envelope (spectral flux)
+//!   peak: a local maximum over ±120 ms, above the mean + 1.5 σ of the ±1.5 s around it
+//!   strength: its height relative to the strongest peak, 0…1
+//!   sections: where the mean level of the next 8 s differs from the last 8 s by ≥ 3 dB
+//! select(density): spacing g = 8 · 2^(−density/25) seconds, keep the strongest peaks at least
+//!   g/2 apart until there are duration / g of them; section changes always come first
 //! ```
 //!
-//! | density | spacing | at 120 BPM, 60 s (120 beats) |
+//! | density | spacing | 3 min 40 of music |
 //! |---|---|---|
-//! | 0 | 16 beats (4 bars) | ≈ 8 markers |
-//! | 25 | 8 beats (2 bars) | ≈ 15 |
-//! | 50 | 4 beats (1 bar) | ≈ 30 |
-//! | 75 | 2 beats | ≈ 60 |
-//! | 100 | every beat | ≈ 120 |
+//! | 0 | 8 s | ≈ 27 markers |
+//! | 25 | 4 s | ≈ 55 |
+//! | 50 | 2 s | ≈ 110 |
+//! | 75 | 1 s | ≈ 220 (if the music has that many peaks) |
+//! | 100 | 0.5 s | ≈ 440 (same) |
 //!
-//! Between two stops the coarser level is kept whole and the beats of the finer level are added
-//! strongest first, so moving the slider adds cuts where the music hits hardest. Section starts
-//! are always eligible. Everything is deterministic.
+//! Everything is deterministic.
 
-use crate::remix::{Analysis, beat_lead};
+use crate::remix::onset_envelope;
 
-/// Beats per bar (4/4 is assumed).
-pub const BEATS_PER_BAR: usize = 4;
-/// Beats of loudness compared on each side of a candidate section start (two bars).
-const WINDOW: usize = 8;
-/// Smallest loudness change (dB) that starts a section: a drop, a chorus coming in, a breakdown.
+/// Half-width (seconds) of the neighbourhood a peak must dominate.
+const PEAK_RADIUS: f64 = 0.12;
+/// Half-width (seconds) of the window the peak threshold is measured on.
+const THRESHOLD_RADIUS: f64 = 1.5;
+/// A peak stands this many standard deviations above its surroundings.
+const THRESHOLD_SIGMAS: f32 = 1.5;
+/// Below this height (the envelope has unit standard deviation) nothing was really heard.
+const MIN_HEIGHT: f32 = 1.0;
+/// A peak quieter than this fraction of the loudest one (−30 dB) is background noise.
+const MIN_LEVEL: f32 = 0.03;
+/// Length of one loudness block (seconds).
+const BLOCK: f64 = 0.5;
+/// Blocks of loudness compared on each side of a candidate section change (8 s).
+const WINDOW: usize = 16;
+/// Smallest loudness change (dB) that makes a section change.
 const MIN_CHANGE_DB: f32 = 3.0;
+/// A section change takes the strongest peak this close to it (seconds).
+const SECTION_SNAP: f64 = 1.0;
 
-/// How structurally important a beat is (higher is coarser).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Level {
-    Beat = 0,
-    HalfBar = 1,
-    Bar = 2,
-    TwoBars = 3,
-    Phrase = 4,
-    Section = 5,
-}
-
-impl Level {
-    pub fn name(self) -> &'static str {
-        match self {
-            Level::Beat => "beat",
-            Level::HalfBar => "halfBar",
-            Level::Bar => "bar",
-            Level::TwoBars => "twoBars",
-            Level::Phrase => "phrase",
-            Level::Section => "section",
-        }
-    }
-}
-
-/// One ranked beat.
+/// One place where the music hits.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RankedBeat {
-    /// Index in [`Analysis::beats`].
-    pub index: usize,
+pub struct Peak {
     /// Attack position (samples of the analysed signal).
     pub pos: i64,
-    pub level: Level,
-    /// Onset strength relative to the strongest beat, 0 … 1.
-    pub accent: f32,
-    /// `level + 0.99 · accent`: the order beats are picked in.
-    pub score: f32,
+    /// Height relative to the strongest peak, 0 … 1.
+    pub strength: f32,
+    /// A section change: the music gets clearly louder or quieter here.
+    pub section: bool,
 }
 
-/// The ranked beats of a piece of music.
+/// The peaks of a piece of music, in time order.
 #[derive(Clone, Debug, PartialEq)]
-pub struct BeatGrid {
-    pub beats: Vec<RankedBeat>,
-    /// Index of the first downbeat (0 … 3).
-    pub downbeat: usize,
-    /// Beat indices where a new section starts.
-    pub sections: Vec<usize>,
-    pub bpm: f64,
+pub struct PeakMap {
+    pub peaks: Vec<Peak>,
+    pub sample_rate: u32,
+    pub samples: usize,
 }
 
-fn sim(a: &Analysis, i: usize, j: usize) -> f32 {
-    let m = a.beats.len();
-    i.checked_mul(m).and_then(|r| r.checked_add(j)).and_then(|k| a.sim.get(k)).copied().unwrap_or(0.0)
-}
-
-/// Bar phase of the downbeats: where the harmony changes most, onset strength as a tie-break.
-fn downbeat_phase(a: &Analysis, accent: &[f32]) -> usize {
-    let m = a.beats.len();
-    let mut best = (f32::MIN, 0usize);
-    for p in 0..BEATS_PER_BAR {
-        let (mut s, mut n) = (0f32, 0f32);
-        for i in (p..m).step_by(BEATS_PER_BAR) {
-            let change = if i > 0 { 1.0 - sim(a, i - 1, i) } else { 0.0 };
-            s += change + 0.25 * accent.get(i).copied().unwrap_or(0.0);
-            n += 1.0;
+fn mono(channels: &[&[f32]]) -> Vec<f32> {
+    let len = channels.iter().map(|c| c.len()).max().unwrap_or(0);
+    let count = channels.len().max(1) as f32;
+    let mut out = vec![0f32; len];
+    for ch in channels {
+        for (o, v) in out.iter_mut().zip(ch.iter()) {
+            *o += v / count;
         }
-        let v = if n > 0.0 { s / n } else { 0.0 };
-        if v > best.0 {
-            best = (v, p);
-        }
-    }
-    best.1
-}
-
-/// Loudness novelty at every beat: the change (dB) between the mean loudness of the [`WINDOW`]
-/// beats after and the ones before. 0 near the edges.
-fn novelty(a: &Analysis) -> Vec<f32> {
-    let m = a.beats.len();
-    let mut out = vec![0f32; m];
-    if m < 2 * WINDOW {
-        return out;
-    }
-    let mean = |from: usize| a.loudness.iter().skip(from).take(WINDOW).sum::<f32>() / WINDOW as f32;
-    for (i, o) in out.iter_mut().enumerate().take(m - WINDOW + 1).skip(WINDOW) {
-        *o = (mean(i) - mean(i - WINDOW)).abs();
     }
     out
 }
 
-/// Section starts: novelty peaks of at least [`MIN_CHANGE_DB`] (local maxima over ±one bar),
-/// snapped to the nearest downbeat, at least two bars apart.
-fn sections(nov: &[f32], downbeat: usize) -> Vec<usize> {
-    let r = BEATS_PER_BAR;
+/// Frames of `env` that stand out from what surrounds them.
+fn peak_frames(env: &[f32], radius: usize, wide: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    for (t, &v) in env.iter().enumerate() {
+        if v < MIN_HEIGHT {
+            continue;
+        }
+        let near = env.get(t.saturating_sub(radius)..(t + radius + 1).min(env.len())).unwrap_or(&[]);
+        if near.iter().any(|&w| w > v) {
+            continue;
+        }
+        // on a plateau, the first frame counts
+        if t > 0 && env.get(t - 1).is_some_and(|&w| w == v) {
+            continue;
+        }
+        let around = env.get(t.saturating_sub(wide)..(t + wide + 1).min(env.len())).unwrap_or(&[]);
+        let n = around.len().max(1) as f32;
+        let mean = around.iter().sum::<f32>() / n;
+        let sd = (around.iter().map(|w| (w - mean) * (w - mean)).sum::<f32>() / n).sqrt();
+        if v > mean + THRESHOLD_SIGMAS * sd {
+            out.push(t);
+        }
+    }
+    out
+}
+
+/// Loudness (dB) of consecutive blocks of `x`.
+fn block_db(x: &[f32], block: usize) -> Vec<f32> {
+    x.chunks(block.max(1))
+        .map(|c| {
+            let power = c.iter().map(|v| v * v).sum::<f32>() / c.len().max(1) as f32;
+            10.0 * power.max(1e-10).log10()
+        })
+        .collect()
+}
+
+/// Sample positions where the level changes for good: a drop, a chorus coming in, a breakdown.
+fn section_changes(x: &[f32], sample_rate: u32) -> Vec<i64> {
+    let block = (BLOCK * f64::from(sample_rate)) as usize;
+    let db = block_db(x, block);
+    if db.len() < 2 * WINDOW {
+        return Vec::new();
+    }
+    let mean = |from: usize| db.iter().skip(from).take(WINDOW).sum::<f32>() / WINDOW as f32;
+    let mut change = vec![0f32; db.len()];
+    for (i, c) in change.iter_mut().enumerate().take(db.len() - WINDOW + 1).skip(WINDOW) {
+        *c = (mean(i) - mean(i - WINDOW)).abs();
+    }
     let mut out: Vec<usize> = Vec::new();
-    for (i, &v) in nov.iter().enumerate() {
+    for (i, &v) in change.iter().enumerate() {
         if v < MIN_CHANGE_DB {
             continue;
         }
-        let lo = i.saturating_sub(r);
-        let is_peak = nov.iter().enumerate().skip(lo).take(2 * r + 1).all(|(j, &w)| w < v || (w == v && j >= i));
-        if !is_peak {
-            continue;
-        }
-        // nearest downbeat (ties go earlier)
-        let off = (i + BEATS_PER_BAR - downbeat % BEATS_PER_BAR) % BEATS_PER_BAR;
-        let snapped = if off <= BEATS_PER_BAR / 2 { i.saturating_sub(off) } else { i + (BEATS_PER_BAR - off) };
-        if snapped >= nov.len() {
-            continue;
-        }
-        if out.last().is_none_or(|&l| snapped >= l + 2 * BEATS_PER_BAR) {
-            out.push(snapped);
+        let near = change.iter().enumerate().skip(i.saturating_sub(WINDOW / 2)).take(WINDOW + 1);
+        if near.into_iter().all(|(j, &w)| w < v || (w == v && j >= i)) && out.last().is_none_or(|&l| i >= l + WINDOW) {
+            out.push(i);
         }
     }
-    out
+    out.iter().map(|&i| i.saturating_mul(block) as i64).collect()
 }
 
-/// Rank the beats of analysed music.
-pub fn grid(a: &Analysis) -> BeatGrid {
-    let m = a.beats.len();
-    let top = a.strength.iter().copied().fold(0f32, f32::max);
-    let accent: Vec<f32> = (0..m).map(|i| if top > 0.0 { (a.strength.get(i).copied().unwrap_or(0.0) / top).clamp(0.0, 1.0) } else { 0.0 }).collect();
-    let downbeat = downbeat_phase(a, &accent);
-    let sections = sections(&novelty(a), downbeat);
-    let lead = beat_lead(a.sample_rate);
-    let mut beats = Vec::with_capacity(m);
-    let mut origin = downbeat; // bars count from the last section start (or the first downbeat)
-    for (i, &b) in a.beats.iter().enumerate() {
-        let is_section = sections.contains(&i);
-        if is_section {
-            origin = i;
-        }
-        let level = if is_section {
-            Level::Section
-        } else if i < origin {
-            // pickup beats before the first downbeat
-            if (origin - i).is_multiple_of(2) { Level::HalfBar } else { Level::Beat }
-        } else {
-            let rel = i - origin;
-            let (bar, pos) = (rel / BEATS_PER_BAR, rel % BEATS_PER_BAR);
-            match pos {
-                0 if bar.is_multiple_of(4) => Level::Phrase,
-                0 if bar.is_multiple_of(2) => Level::TwoBars,
-                0 => Level::Bar,
-                2 => Level::HalfBar,
-                _ => Level::Beat,
-            }
-        };
-        let acc = accent.get(i).copied().unwrap_or(0.0);
-        beats.push(RankedBeat { index: i, pos: b.saturating_add(lead), level, accent: acc, score: level as u8 as f32 + 0.99 * acc });
+/// Find the peaks of a piece of music.
+pub fn analyze(channels: &[&[f32]], sample_rate: u32) -> PeakMap {
+    let x = mono(channels);
+    let mut map = PeakMap { peaks: Vec::new(), sample_rate, samples: x.len() };
+    if x.is_empty() || sample_rate == 0 {
+        return map;
     }
-    BeatGrid { beats, downbeat, sections, bpm: a.bpm }
+    let (env, n, hop) = onset_envelope(&x, sample_rate);
+    let hop = hop.max(1);
+    let frames_per_second = f64::from(sample_rate) / hop as f64;
+    let radius = ((PEAK_RADIUS * frames_per_second).round() as usize).max(1);
+    let wide = ((THRESHOLD_RADIUS * frames_per_second).round() as usize).max(1);
+    let frames = peak_frames(&env, radius, wide);
+    let top = frames.iter().filter_map(|&t| env.get(t)).copied().fold(0f32, f32::max);
+    if top <= 0.0 {
+        return map;
+    }
+    // measured in remix::analyze: an attack sits at t·hop + n − ¾·hop
+    let at = |t: usize| t.saturating_mul(hop).saturating_add(n).saturating_sub(3 * hop / 4);
+    let level = |t: usize| {
+        let from = at(t).min(x.len());
+        let part = x.get(from..(from + n).min(x.len())).unwrap_or(&[]);
+        (part.iter().map(|v| v * v).sum::<f32>() / part.len().max(1) as f32).sqrt()
+    };
+    let loudest = frames.iter().map(|&t| level(t)).fold(0f32, f32::max);
+    for t in frames {
+        if level(t) < loudest * MIN_LEVEL {
+            continue;
+        }
+        let strength = (env.get(t).copied().unwrap_or(0.0) / top).clamp(0.0, 1.0);
+        map.peaks.push(Peak { pos: at(t) as i64, strength, section: false });
+    }
+    let snap = (SECTION_SNAP * f64::from(sample_rate)) as i64;
+    for at in section_changes(&x, sample_rate) {
+        let near = map.peaks.iter_mut().filter(|p| (p.pos - at).abs() <= snap);
+        if let Some(best) = near.max_by(|a, b| a.strength.total_cmp(&b.strength)) {
+            best.section = true;
+        }
+    }
+    map
 }
 
-/// Spacing (in beats) the density slider asks for: 16 at 0, 4 at 50, 1 at 100.
+/// Spacing (seconds) the density slider asks for: 8 at 0, 2 at 50, 0.5 at 100.
 pub fn spacing(density: f64) -> f64 {
     let d = if density.is_finite() { density.clamp(0.0, 100.0) } else { 50.0 };
-    16.0 * 2f64.powf(-d / 25.0)
+    8.0 * 2f64.powf(-d / 25.0)
 }
 
-/// The coarsest level a spacing (beats) keeps whole.
-fn level_for(spacing: f64) -> (Level, usize) {
-    if spacing >= 16.0 {
-        (Level::Phrase, 16)
-    } else if spacing >= 8.0 {
-        (Level::TwoBars, 8)
-    } else if spacing >= 4.0 {
-        (Level::Bar, 4)
-    } else if spacing >= 2.0 {
-        (Level::HalfBar, 2)
-    } else {
-        (Level::Beat, 1)
-    }
-}
-
-/// The beats to mark at `density` (0 … 100), in time order.
-pub fn select(g: &BeatGrid, density: f64) -> Vec<RankedBeat> {
-    let m = g.beats.len();
-    if m == 0 {
-        return Vec::new();
-    }
+/// The peaks to mark at `density` (0 … 100), in time order.
+pub fn select(map: &PeakMap, density: f64) -> Vec<Peak> {
+    let sr = f64::from(map.sample_rate.max(1));
     let sp = spacing(density);
-    let (min_level, step) = level_for(sp);
-    let target = ((m as f64 / sp).round() as usize).clamp(1, m);
-    let mut cands: Vec<&RankedBeat> = g.beats.iter().filter(|b| b.level >= min_level).collect();
-    // best first; equal scores in time order
-    cands.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.index.cmp(&b.index)));
-    // ¾ of the step: a section start may fall off the bar grid of the previous section
-    let min_gap = (step * 3).div_ceil(4).max(1);
-    let mut taken: Vec<usize> = Vec::new();
-    for c in cands {
-        if taken.len() >= target {
+    let target = ((map.samples as f64 / sr / sp).round() as usize).max(1);
+    let gap = (sp / 2.0 * sr) as i64;
+    let mut order: Vec<&Peak> = map.peaks.iter().collect();
+    // section changes first, then the strongest; equal scores in time order
+    order.sort_by(|a, b| b.section.cmp(&a.section).then(b.strength.total_cmp(&a.strength)).then(a.pos.cmp(&b.pos)));
+    let mut taken: Vec<Peak> = Vec::new();
+    for p in order {
+        if taken.len() >= target && !p.section {
             break;
         }
-        if taken.iter().all(|&t| t.abs_diff(c.index) >= min_gap) {
-            taken.push(c.index);
+        if taken.iter().all(|t| (t.pos - p.pos).abs() >= gap) {
+            taken.push(*p);
         }
     }
-    taken.sort_unstable();
-    taken.iter().filter_map(|&i| g.beats.get(i).copied()).collect()
+    taken.sort_by_key(|p| p.pos);
+    taken
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::remix::{analyze, test_music};
 
     const SR: u32 = 22_050;
 
-    fn grid_of(bpm: f64, bars: usize) -> (BeatGrid, Vec<i64>) {
-        let (m, truth) = test_music(SR, bpm, bars, 7);
-        let refs: Vec<&[f32]> = m.iter().map(Vec::as_slice).collect();
-        (grid(&analyze(&refs, SR).unwrap()), truth)
+    /// Quiet noise with a decaying hit at each of `hits` (seconds, height).
+    fn hits(seconds: f64, hits: &[(f64, f32)]) -> Vec<f32> {
+        let len = (seconds * f64::from(SR)) as usize;
+        let mut seed = 12_345u32;
+        let mut x: Vec<f32> = (0..len)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                ((seed >> 16) & 0x7fff) as f32 / 32_768.0 * 0.002 - 0.001
+            })
+            .collect();
+        for &(at, height) in hits {
+            let start = (at * f64::from(SR)) as usize;
+            for i in 0..(SR as usize / 5) {
+                let t = i as f32 / SR as f32;
+                if let Some(v) = x.get_mut(start + i) {
+                    *v += height * (t * 2_000.0).sin() * (-t * 25.0).exp();
+                }
+            }
+        }
+        x
     }
 
-    /// Index in `truth` of the true beat nearest `pos`, and the distance in seconds.
-    fn nearest(truth: &[i64], pos: i64) -> (usize, f64) {
-        let (i, d) = truth.iter().enumerate().map(|(i, &t)| (i, (t - pos).abs())).min_by_key(|&(_, d)| d).unwrap();
-        (i, d as f64 / SR as f64)
+    fn near(map: &[Peak], at: f64) -> bool {
+        map.iter().any(|p| (p.pos as f64 / f64::from(SR) - at).abs() < 0.06)
     }
 
     #[test]
     fn spacing_follows_the_slider() {
-        assert_eq!(spacing(0.0), 16.0);
-        assert_eq!(spacing(50.0), 4.0);
-        assert_eq!(spacing(100.0), 1.0);
-        assert_eq!(spacing(-5.0), 16.0);
-        assert_eq!(spacing(f64::NAN), 4.0);
+        assert_eq!(spacing(0.0), 8.0);
+        assert_eq!(spacing(50.0), 2.0);
+        assert_eq!(spacing(100.0), 0.5);
+        assert_eq!(spacing(-5.0), 8.0);
+        assert_eq!(spacing(f64::NAN), 2.0);
     }
 
     #[test]
-    fn markers_land_on_beats_and_bars() {
-        let (g, truth) = grid_of(120.0, 24);
-        // the downbeat is a true bar start
-        let first_down = g.beats.iter().find(|b| b.level >= Level::Bar).unwrap();
-        let (i, d) = nearest(&truth, first_down.pos);
-        assert!(d < 0.03, "first downbeat {d} s off");
-        assert_eq!(i % 4, 0, "downbeat on beat {i}");
-        // density 50: one marker per bar, every one on a true bar start
-        let bars = select(&g, 50.0);
-        assert!((20..=25).contains(&bars.len()), "{} markers", bars.len());
-        for b in &bars {
-            let (i, d) = nearest(&truth, b.pos);
-            assert!(d < 0.03 && i % 4 == 0, "marker {i} ({d} s)");
+    fn markers_follow_irregular_hits() {
+        // no tempo at all: gaps of 3.1, 1.7, 5.3, 2.2 s
+        let times = [2.0, 5.1, 6.8, 12.1, 14.3];
+        let list: Vec<(f64, f32)> = times.iter().map(|&t| (t, 0.5)).collect();
+        let x = hits(18.0, &list);
+        let map = analyze(&[&x], SR);
+        let chosen = select(&map, 50.0);
+        for t in times {
+            assert!(near(&chosen, t), "no marker at {t} s: {chosen:?}");
         }
+        assert_eq!(chosen.len(), times.len(), "{chosen:?}");
     }
 
     #[test]
-    fn loudness_changes_start_sections() {
-        // bars 8 … 15 three times louder (+9.5 dB): sections at bars 8 and 16
-        let (mut m, truth) = test_music(SR, 120.0, 24, 7);
-        let (b8, b16) = (truth[32] as usize, truth[64] as usize);
-        for ch in &mut m {
-            ch[b8..b16].iter_mut().for_each(|v| *v *= 3.0);
-        }
-        let refs: Vec<&[f32]> = m.iter().map(Vec::as_slice).collect();
-        let g = grid(&analyze(&refs, SR).unwrap());
-        let found: Vec<usize> = g.sections.iter().map(|&i| nearest(&truth, g.beats[i].pos).0).collect();
-        assert_eq!(found, vec![32, 64], "section starts (true beat index)");
-        // the sparsest density still marks them
-        let sparse = select(&g, 0.0);
-        for &s in &g.sections {
-            assert!(sparse.iter().any(|b| b.index == s), "section beat {s} not marked at density 0");
-        }
-        // music at a steady level has no sections
-        let (steady, _) = grid_of(120.0, 24);
-        assert!(steady.sections.is_empty(), "{:?}", steady.sections);
+    fn the_strongest_hits_win_at_low_density() {
+        let mut list: Vec<(f64, f32)> = (0..12).map(|i| (1.0 + f64::from(i) * 1.9, 0.08)).collect();
+        list[3].1 = 0.8;
+        list[9].1 = 0.8;
+        let x = hits(24.0, &list);
+        let map = analyze(&[&x], SR);
+        let sparse = select(&map, 0.0);
+        assert!(sparse.len() <= 4, "{sparse:?}");
+        assert!(near(&sparse, list[3].0) && near(&sparse, list[9].0), "{sparse:?}");
     }
 
     #[test]
-    fn density_adds_markers_monotonically() {
-        let (g, _) = grid_of(110.0, 20);
-        let mut last: Vec<usize> = Vec::new();
-        for d in (0..=100).step_by(5) {
-            let now: Vec<usize> = select(&g, d as f64).iter().map(|b| b.index).collect();
-            assert!(now.len() >= last.len(), "density {d}: {} < {}", now.len(), last.len());
-            assert!(now.windows(2).all(|w| w[0] < w[1]));
-            last = now;
-        }
-        assert_eq!(last.len(), g.beats.len(), "100 marks every beat");
+    fn a_lasting_level_change_is_a_section() {
+        let mut list: Vec<(f64, f32)> = (0..15).map(|i| (1.0 + f64::from(i), 0.05)).collect();
+        list.extend((0..15).map(|i| (16.0 + f64::from(i), 0.5)));
+        let x = hits(32.0, &list);
+        let map = analyze(&[&x], SR);
+        let sections: Vec<&Peak> = map.peaks.iter().filter(|p| p.section).collect();
+        assert_eq!(sections.len(), 1, "{sections:?}");
+        let at = sections[0].pos as f64 / f64::from(SR);
+        assert!((at - 16.0).abs() < 1.5, "section at {at} s");
+        assert!(select(&map, 0.0).iter().any(|p| p.section));
     }
 
     #[test]
-    fn deterministic_and_empty_safe() {
-        let (g, _) = grid_of(128.0, 16);
-        assert_eq!(select(&g, 37.0), select(&g, 37.0));
-        let empty = BeatGrid { beats: Vec::new(), downbeat: 0, sections: Vec::new(), bpm: 120.0 };
-        assert!(select(&empty, 50.0).is_empty());
+    fn more_density_never_means_fewer_markers() {
+        let list: Vec<(f64, f32)> = (0..40).map(|i| (0.5 + f64::from(i) * 0.61, 0.1 + 0.01 * i as f32)).collect();
+        let x = hits(26.0, &list);
+        let map = analyze(&[&x], SR);
+        let (few, many) = (select(&map, 0.0).len(), select(&map, 100.0).len());
+        assert!(few < many, "{few} !< {many}");
+    }
+
+    #[test]
+    fn silence_and_nonsense_are_safe() {
+        assert!(analyze(&[], SR).peaks.is_empty());
+        let quiet = vec![0f32; SR as usize * 3];
+        assert!(analyze(&[&quiet], SR).peaks.is_empty());
+        assert!(analyze(&[&quiet], 0).peaks.is_empty());
+        let map = PeakMap { peaks: Vec::new(), sample_rate: 0, samples: 0 };
+        assert!(select(&map, 50.0).is_empty());
     }
 }

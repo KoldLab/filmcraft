@@ -85,7 +85,7 @@ fn session() -> Session {
 
 /// The marker count the dialog's info line announces.
 fn announced(info: &str) -> usize {
-    info.split(" · ").nth(1).and_then(|s| s.split(' ').next()).and_then(|n| n.parse().ok()).unwrap_or_else(|| panic!("no count in {info:?}"))
+    info.split(' ').next().and_then(|n| n.parse().ok()).unwrap_or_else(|| panic!("no count in {info:?}"))
 }
 
 #[test]
@@ -99,11 +99,10 @@ fn mark_beats_dialog_counts_live_and_marks() {
     for id in ["density", "offset", "inOut", "info", "ok", "cancel"] {
         d.element(&format!("markBeats.{id}"));
     }
-    // default density: one marker per bar (16 bars)
+    // default density: one peak per 2 s of the 32 s of music
     let info = d.element("markBeats.info")["label"].as_str().unwrap().to_string();
-    assert!(info.starts_with("120 BPM"), "{info}");
     let per_bar = announced(&info);
-    assert!((14..=17).contains(&per_bar), "{info}");
+    assert!((8..=20).contains(&per_bar), "{info}");
     // Cancel changes nothing
     d.ok("ui.click", json!({"id": "markBeats.cancel"}));
     d.frames(3);

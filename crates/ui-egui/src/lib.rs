@@ -197,6 +197,8 @@ pub struct FilmcraftApp {
     pub hooks: HostHooks,
     pub dialog: Option<Dialog>,
     pub(crate) updates_rt: updates_ui::Runtime,
+    /// The transcription in progress (or waiting for an answer).
+    pub(crate) transcribe_job: Option<panels::transcribe::Job>,
     pub file_dialogs: panels::file_dialogs::FileDialogState,
     /// The native file dialog the host is showing ([`Self::pick`]).
     native_dialog: Option<native_dialogs::PendingDialog>,

@@ -1,6 +1,6 @@
 mod audio51_ui;
-mod beat_markers_ui;
 mod audio_fx_editor_ui;
+mod beat_markers_ui;
 mod caption_copy_paste_ui;
 mod caption_export_ui;
 mod caption_list_follow_ui;

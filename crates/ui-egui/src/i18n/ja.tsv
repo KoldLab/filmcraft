@@ -3611,8 +3611,8 @@
 	Mark Beats	ビートをマーク
 	Density:	密度:
 	Only between In and Out	イン点とアウト点の間のみ
-	Section starts (drops, breakdowns) are always marked; more density adds bars, then beats, strongest first.	セクションの始まり（ドロップ、ブレイク）は常にマークされます。密度を上げると小節、次に拍が強い順に追加されます。
-	{bpm} BPM · {count} markers ({sections} sections)	{bpm} BPM · マーカー {count} 個（セクション {sections} 個）
+	Markers land on the strongest sounds of the music. More density adds quieter ones; level changes are always marked.	マーカーは音楽の最も強い音に置かれます。密度を上げると弱い音も追加されます。音量の変化は常にマークされます。
+	{count} markers ({sections} sections)	{count} 個のマーカー（{sections} セクション）
 	Added {count} beat markers	ビートマーカーを {count} 個追加しました
 	Opens in your web browser: {url}	ウェブブラウザーで開きます：{url}
 	Saves this session's log and shows it in your file manager.	このセッションのログを保存し、ファイルマネージャーで表示します。

@@ -2,8 +2,8 @@
 //! effects) is carried in egui temp data so the timeline/monitors can accept drops.
 
 pub mod audio_fx_editor;
-pub mod caption_export;
 pub mod beat_markers;
+pub mod caption_export;
 pub mod clip_dialogs;
 pub mod color_dialogs;
 pub mod dialogs;
@@ -51,6 +51,7 @@ pub mod timeline_captions;
 pub mod timeline_hit;
 pub mod timeline_volume;
 pub mod tools;
+pub mod transcribe;
 pub mod transform_handles;
 pub mod transition_controls;
 pub mod trim_monitor;

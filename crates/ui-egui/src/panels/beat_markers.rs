@@ -43,8 +43,7 @@ fn preview(app: &mut FilmcraftApp, d: &mut Draft) {
     q["preview"] = json!(true);
     d.info = match app.session.execute("markers.markBeats", q) {
         Ok(v) => tlf!(
-            "{bpm} BPM · {count} markers ({sections} sections)",
-            bpm = format!("{:.0}", v["bpm"].as_f64().unwrap_or(0.0)),
+            "{count} markers ({sections} sections)",
             count = v["markers"].as_u64().unwrap_or(0).to_string(),
             sections = v["sections"].as_u64().unwrap_or(0).to_string()
         ),
@@ -96,7 +95,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
             ui.add_space(6.0);
             let i = ui.weak(&d.info);
             elems.push(("markBeats.info".into(), i.rect, d.info.clone()));
-            ui.weak(tl!("Section starts (drops, breakdowns) are always marked; more density adds bars, then beats, strongest first."));
+            ui.weak(tl!("Markers land on the strongest sounds of the music. More density adds quieter ones; level changes are always marked."));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let c = ui.button(tl!("Cancel"));

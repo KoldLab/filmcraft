@@ -3587,8 +3587,8 @@
 	Mark Beats	标记节拍
 	Density:	密度：
 	Only between In and Out	仅在入点和出点之间
-	Section starts (drops, breakdowns) are always marked; more density adds bars, then beats, strongest first.	段落开头（高潮、间奏）始终会被标记；提高密度会依次添加小节和节拍，强拍优先。
-	{bpm} BPM · {count} markers ({sections} sections)	{bpm} BPM · {count} 个标记（{sections} 个段落）
+	Markers land on the strongest sounds of the music. More density adds quieter ones; level changes are always marked.	标记落在音乐中最强的声音上。提高密度会添加较弱的声音；音量变化始终会被标记。
+	{count} markers ({sections} sections)	{count} 个标记（{sections} 个段落）
 	Added {count} beat markers	已添加 {count} 个节拍标记
 	Opens in your web browser: {url}	在网页浏览器中打开：{url}
 	Saves this session's log and shows it in your file manager.	保存本次会话的日志并在文件管理器中显示。

@@ -127,29 +127,36 @@ fn speech_err(e: SpeechError) -> EngineError {
     EngineError::Other(e.to_string())
 }
 
-/// The transcriber to use: the installed one, else the named catalogue model.
-fn transcriber(s: &Session, p: &Value) -> Result<Arc<dyn Transcriber>> {
-    if let Some(t) = &s.transcriber {
-        return Ok(t.clone());
-    }
-    // Settings ▸ Media Analysis & Transcription ▸ Speech model
-    let model = str_p(p, "model").unwrap_or(&s.prefs.media_analysis.whisper_model);
-    if filmcraft_speech::models::find(model).is_none() {
-        return Err(speech_err(SpeechError::UnknownModel(model.into())));
-    }
-    if !filmcraft_speech::available() {
-        return Err(EngineError::Other(NO_SPEECH.into()));
-    }
-    let dir = models_dir().ok_or_else(|| EngineError::Other("no data directory for speech models".into()))?;
-    filmcraft_speech::load(&dir, model).map_err(speech_err)
+/// A transcription ready to run away from the session (the UI's background thread): the audio
+/// is already read.
+pub struct Prepared {
+    installed: Option<Arc<dyn Transcriber>>,
+    model: String,
+    opts: Options,
+    audio: Vec<(ItemId, Vec<f32>)>,
+    skipped: Vec<u64>,
 }
 
-fn generate(s: &mut Session, p: &Value) -> Result<Value> {
+/// The transcripts of a [`Prepared`], to give back to the session with [`finish`].
+pub struct Finished {
+    done: Vec<(ItemId, Transcript)>,
+    skipped: Vec<u64>,
+}
+
+/// Read what `p` asks to transcribe.
+pub fn prepare(s: &Session, p: &Value) -> Result<Prepared> {
     let items = targets(s, p);
     if items.is_empty() {
         return Err(bad("transcript.generate", "nothing to transcribe (pass `items`, select clips, or open a sequence with audio)"));
     }
-    let t = transcriber(s, p)?;
+    // Settings ▸ Media Analysis & Transcription ▸ Speech model
+    let model = str_p(p, "model").unwrap_or(&s.prefs.media_analysis.whisper_model).to_string();
+    if filmcraft_speech::models::find(&model).is_none() {
+        return Err(speech_err(SpeechError::UnknownModel(model)));
+    }
+    if s.transcriber.is_none() && !filmcraft_speech::available() {
+        return Err(EngineError::Other(NO_SPEECH.into()));
+    }
     // Settings ▸ Media Analysis & Transcription: language (or auto-detect) and speaker labelling
     let ma = &s.prefs.media_analysis;
     let default_language = if ma.language_auto_detect { None } else { Some(ma.default_language.clone()) };
@@ -161,20 +168,70 @@ fn generate(s: &mut Session, p: &Value) -> Result<Value> {
         diarize: bool_p(p, "diarize").unwrap_or(ma.speaker_labeling != "off"),
         max_speakers: u64_p(p, "maxSpeakers").map(|n| n.clamp(1, 32) as usize).unwrap_or(Options::default().max_speakers),
     };
-    let mut done: Vec<(ItemId, Transcript)> = Vec::new();
+    let mut audio = Vec::new();
     let mut skipped = Vec::new();
     for item in items {
-        let Some(audio) = item_audio(s, item) else {
-            skipped.push(item.0);
-            continue;
-        };
-        let mut tr = t.transcribe(&audio, &opts, &mut |_, _| true).map_err(speech_err)?;
-        tr.normalize();
-        done.push((item, tr));
+        match item_audio(s, item) {
+            Some(a) => audio.push((item, a)),
+            None => skipped.push(item.0),
+        }
     }
-    if done.is_empty() {
+    if audio.is_empty() {
         return Err(EngineError::Other("none of the clips has audio to transcribe".into()));
     }
+    Ok(Prepared { installed: s.transcriber.clone(), model, opts, audio, skipped })
+}
+
+impl Prepared {
+    /// The model's name and size when it must be downloaded first.
+    pub fn missing_model(&self) -> Option<(String, u64)> {
+        if self.installed.is_some() {
+            return None;
+        }
+        let m = filmcraft_speech::models::find(&self.model)?;
+        let dir = models_dir()?;
+        (!filmcraft_speech::models::installed(&dir, m)).then(|| (m.name.to_string(), filmcraft_speech::models::missing_bytes(&dir, m)))
+    }
+
+    fn fetch(&self, progress: filmcraft_speech::ProgressFn) -> Result<()> {
+        let Some(m) = filmcraft_speech::models::find(&self.model) else { return Ok(()) };
+        let dir = models_dir().ok_or_else(|| EngineError::Other("no data directory for speech models".into()))?;
+        #[cfg(feature = "speech-download")]
+        filmcraft_speech::models::download(&dir, m, &mut |done, total, _| progress(done as f32 / total.max(1) as f32, "Downloading Whisper…"))
+            .map_err(speech_err)?;
+        #[cfg(not(feature = "speech-download"))]
+        let _ = (m, dir, progress);
+        Ok(())
+    }
+
+    /// Download the model if needed, load it and transcribe. Slow: runs off the UI thread.
+    pub fn run(self, progress: filmcraft_speech::ProgressFn) -> Result<Finished> {
+        if self.missing_model().is_some() {
+            self.fetch(&mut *progress)?;
+        }
+        let t = match &self.installed {
+            Some(t) => t.clone(),
+            None => {
+                progress(0.0, "Loading Whisper…");
+                let dir = models_dir().ok_or_else(|| EngineError::Other("no data directory for speech models".into()))?;
+                filmcraft_speech::load(&dir, &self.model).map_err(speech_err)?
+            }
+        };
+        let total = self.audio.len().max(1) as f32;
+        let mut done = Vec::new();
+        for (n, (item, audio)) in self.audio.iter().enumerate() {
+            let mut part = |f: f32, status: &str| progress((n as f32 + f) / total, status);
+            let mut tr = t.transcribe(audio, &self.opts, &mut part).map_err(speech_err)?;
+            tr.normalize();
+            done.push((*item, tr));
+        }
+        Ok(Finished { done, skipped: self.skipped })
+    }
+}
+
+/// Put the transcripts into the project (one undo step).
+pub fn finish(s: &mut Session, f: Finished) -> Result<Value> {
+    let Finished { done, skipped } = f;
     let report: Vec<Value> = done
         .iter()
         .map(|(i, t)| json!({"item": i.0, "words": t.words.len(), "speakers": t.speakers.len(), "language": t.language, "source": t.source}))
@@ -186,6 +243,16 @@ fn generate(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     })?;
     Ok(json!({"items": report, "skipped": skipped}))
+}
+
+fn generate(s: &mut Session, p: &Value) -> Result<Value> {
+    let job = prepare(s, p)?;
+    // the command never downloads on its own: hosts ask first (`transcript.downloadModel`)
+    if let Some((name, _)) = job.missing_model() {
+        return Err(speech_err(SpeechError::NotInstalled(name)));
+    }
+    let done = job.run(&mut |_, _| true)?;
+    finish(s, done)
 }
 
 fn set(s: &mut Session, p: &Value) -> Result<Value> {

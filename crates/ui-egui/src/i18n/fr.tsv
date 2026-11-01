@@ -3577,8 +3577,8 @@
 	Mark Beats	Marquer les beats
 	Density:	Densité :
 	Only between In and Out	Seulement entre l'entrée et la sortie
-	Section starts (drops, breakdowns) are always marked; more density adds bars, then beats, strongest first.	Les débuts de section (drops, breaks) sont toujours marqués ; plus de densité ajoute les mesures, puis les beats, les plus forts d'abord.
-	{bpm} BPM · {count} markers ({sections} sections)	{bpm} BPM · {count} marqueurs ({sections} sections)
+	Markers land on the strongest sounds of the music. More density adds quieter ones; level changes are always marked.	Les marqueurs se placent sur les sons les plus forts de la musique. Plus de densité ajoute les plus discrets ; les changements de niveau sont toujours marqués.
+	{count} markers ({sections} sections)	{count} marqueurs ({sections} sections)
 	Added {count} beat markers	{count} marqueurs de beat ajoutés
 # View > Reset Interface Zoom (#2253).
 	Reset Interface Zoom	Réinitialiser le zoom de l'interface
@@ -3633,3 +3633,6 @@
 	The control server is disabled: FILMCRAFT_CONTROL_TOKEN must contain 64 random hex characters (see docs/control-protocol.md)	Le serveur de contrôle est désactivé : FILMCRAFT_CONTROL_TOKEN doit contenir 64 caractères hexadécimaux aléatoires (voir docs/control-protocol.md)
 
 # Control server: the bind-failure notice (port collisions; #3318 may show it too).
+	{model} is needed to transcribe. Download it now ({size} MB)?	{model} est nécessaire pour transcrire. Le télécharger maintenant ({size} Mo) ?
+	It comes from huggingface.co and is checked before use. This happens once.	Il vient de huggingface.co et il est vérifié avant utilisation. Cela n'arrive qu'une fois.
+	Starting…	Démarrage…
