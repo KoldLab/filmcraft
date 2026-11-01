@@ -152,3 +152,35 @@ fn transcript_tab_selects_and_extracts_words() {
     assert_eq!(left, ["Hello", "there", "friend."]);
     assert_eq!(d.ids("text.transcript.word.").len(), 3);
 }
+
+/// The Transcribe button runs in the background and the result lands in the project.
+#[test]
+fn transcribe_button_runs_in_the_background() {
+    use filmcraft_project::{Transcript, Word};
+    use filmcraft_speech::FixedTranscriber;
+    use filmcraft_time::Tick;
+    let mut d = Driver::demo();
+    let word = Word {
+        text: "Bonjour".into(),
+        start: Tick(0),
+        end: Tick(254_016_000_000),
+        ..serde_json::from_value(json!({"text": "", "start": 0, "end": 1})).unwrap()
+    };
+    let transcript = Transcript { language: "fr".into(), source: "fixed".into(), speakers: Vec::new(), words: vec![word] };
+    d.harness.state_mut().session.transcriber = Some(std::sync::Arc::new(FixedTranscriber { transcript, id: "fixed".into() }));
+    d.ok("ui.set", json!({"workspace": "Captions and Graphics"}));
+    d.frames(2);
+    d.ok("ui.click", json!({"id": "text.tab.Transcript"}));
+    d.frames(3);
+    d.ok("ui.click", json!({"id": "text.transcript.generate"}));
+    for _ in 0..2_000 {
+        d.frames(1);
+        if !d.harness.state().session.project.transcripts.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(!d.harness.state().session.project.transcripts.is_empty(), "no transcript came back");
+    d.frames(3);
+    assert!(d.ids("transcribe.").is_empty(), "the dialog stays open");
+}

@@ -98,7 +98,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
     let mut download = None;
     let mut elems: Vec<(&str, egui::Rect, String)> = Vec::new();
     egui::Window::new(tl!("Transcribe"))
-        .id(egui::Id::new("Transcribe job"))
+        .id(egui::Id::unique("Transcribe job"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])

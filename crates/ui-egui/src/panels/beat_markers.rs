@@ -22,7 +22,7 @@ struct Draft {
 }
 
 fn draft_id() -> egui::Id {
-    egui::Id::new("mark-beats-draft")
+    egui::Id::unique("mark-beats-draft")
 }
 
 fn params(d: &Draft) -> Value {
@@ -72,7 +72,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
     let mut apply = false;
     let mut elems: Vec<(String, egui::Rect, String)> = Vec::new();
     egui::Window::new(tl!("Mark Beats"))
-        .id(egui::Id::new("Mark Beats"))
+        .id(egui::Id::unique("Mark Beats"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
