@@ -267,7 +267,7 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
             }
         }
         let mut app = FilmcraftApp::new(session);
-        app.set_startup_update_check(true);
+        app.set_startup_update_check(false);
         app.graphics_notice = notice;
         if recover == Some(false) {
             app.dialog = None;

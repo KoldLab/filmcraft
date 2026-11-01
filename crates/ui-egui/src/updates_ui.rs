@@ -48,20 +48,10 @@ impl FilmcraftApp {
 }
 
 pub(crate) fn check(app: &mut FilmcraftApp) -> Result<Value, String> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        app.updates_rt.check_requested = true;
-        if let Some(ctx) = &app.updates_rt.repaint {
-            ctx.request_repaint();
-        }
-        Ok(Value::Null)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        app.updates_rt.manual_window_open = true;
-        app.updates_rt.status_message = Some("Update check is not supported in the web browser.".into());
-        Ok(Value::Null)
-    }
+    // Fork: updates come from Craft Launcher, the official updater would replace this build.
+    app.updates_rt.manual_window_open = true;
+    app.updates_rt.status_message = Some("This fork is updated from Craft Launcher.".into());
+    Ok(Value::Null)
 }
 
 pub(crate) fn tick(app: &mut FilmcraftApp, ctx: &egui::Context) {
