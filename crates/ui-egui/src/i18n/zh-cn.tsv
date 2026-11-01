@@ -3563,3 +3563,11 @@
 	Export the labels to a preset file…	将标签导出为预设文件…
 	Show the presets folder	显示预设文件夹
 	Delete this preset	删除此预设
+	(customized)	（已自定义）
+	Preset Name:	预设名称：
+	Replace	替换
+	Save as Preset…	存储为预设…
+	Save these settings to “{name}”	将这些设置存储到“{name}”
+	Sequence presets	序列预设
+	Update Preset	更新预设
+	“{name}” already exists. Replace it?	“{name}”已存在。是否替换？

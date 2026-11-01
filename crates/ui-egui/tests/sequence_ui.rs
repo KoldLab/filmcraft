@@ -646,6 +646,10 @@ fn new_sequence_opens_its_dialog() {
     assert_eq!(r["dialog"], "newSequence", "{r}");
     d.frames(10);
     assert_eq!(sequences(&mut d), n0, "nothing is made before OK");
+    assert_eq!(d.app().ui.sequence_settings.tab, "presets", "New Sequence opens on its presets");
+    d.click("sequenceSettings.tab.general");
+    // the window resizes to the tab over a few frames
+    d.frames(10);
     assert_eq!(d.label("sequenceSettings.name"), format!("Sequence {:02}", n0 + 1));
     assert_eq!(d.label("sequenceSettings.timebase"), "23.976 frames/second");
     assert!(d.ids("sequenceSettings.tab.").iter().any(|i| i == "sequenceSettings.tab.tracks"));
@@ -688,6 +692,76 @@ fn new_sequence_opens_its_dialog() {
     assert_eq!(d.label("sequenceSettings.name"), "Direct");
     assert!(d.ids("sequenceSettings.tab.color").iter().any(|i| i == "sequenceSettings.tab.color"));
     d.click("sequenceSettings.cancel");
+}
+
+/// New Sequence ▸ Presets: it opens on the first built-in preset; picking one fills the settings;
+/// Update Preset overrides a built-in (Restore Original brings it back); Save as Preset saves a
+/// new one and asks before replacing one of the same name; OK makes the sequence from them.
+#[test]
+fn new_sequence_presets_save_update_and_restore() {
+    let mut d = Driver::demo();
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("filmcraft-seq-presets-ui-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    d.app().session.prefs_path = Some(dir.join("preferences.json"));
+    let preset = |d: &mut Driver, name: &str| d.app().session.sequence_presets().into_iter().find(|e| e.preset.name == name);
+    const VERTICAL: &str = "Vertical 1080 × 1920 30 fps";
+
+    d.ok("ui.menu.invoke", json!({"id": "file.newSequence"}));
+    d.frames(10);
+    assert_eq!(d.app().ui.sequence_settings.preset, "1080p 23.976 fps");
+    assert_eq!(d.ids("sequenceSettings.preset.").iter().filter(|i| !i.starts_with("sequenceSettings.presetImport")).count(), 6);
+    d.snapshot("new-sequence-presets", "sequenceSettings.");
+    d.click(&format!("sequenceSettings.preset.{VERTICAL}"));
+    let s = d.app().ui.sequence_settings.clone();
+    assert_eq!((s.width, s.height, s.fps_num, s.fps_den, s.preset.as_str()), (1080, 1920, 30, 1, VERTICAL));
+
+    // Update Preset is for changed settings; it overrides the built-in
+    assert!(d.app().ui.sequence_settings.presets.as_ref().is_some_and(|l| !l.is_empty()));
+    d.click("sequenceSettings.updatePreset");
+    assert!(!preset(&mut d, VERTICAL).unwrap().modified, "nothing changed: nothing saved");
+    d.app().ui.sequence_settings.video_tracks = 1;
+    d.frames(2);
+    d.click("sequenceSettings.updatePreset");
+    let e = preset(&mut d, VERTICAL).unwrap();
+    assert!(e.modified && e.builtin);
+    assert_eq!(e.preset.video_tracks, 1);
+
+    // Save as Preset: a new name saves at once
+    d.click("sequenceSettings.savePreset");
+    d.app().ui.sequence_settings.save_as.as_mut().unwrap().name = "My Shorts".into();
+    d.frames(2);
+    d.click("sequenceSettings.savePreset.ok");
+    assert!(d.app().ui.sequence_settings.save_as.is_none(), "prompt closed");
+    assert_eq!(d.app().ui.sequence_settings.preset, "My Shorts");
+    assert_eq!(preset(&mut d, "My Shorts").unwrap().preset.video_tracks, 1);
+    // a taken name (any case) asks first
+    d.app().ui.sequence_settings.audio_tracks = 6;
+    d.frames(2);
+    d.click("sequenceSettings.savePreset");
+    d.app().ui.sequence_settings.save_as.as_mut().unwrap().name = "my shorts".into();
+    d.frames(2);
+    d.click("sequenceSettings.savePreset.ok");
+    assert!(d.app().ui.sequence_settings.save_as.as_ref().unwrap().confirm_replace);
+    assert_eq!(preset(&mut d, "My Shorts").unwrap().preset.audio_tracks, 3, "not replaced before Replace");
+    d.snapshot("new-sequence-preset-replace", "sequenceSettings.");
+    d.click("sequenceSettings.savePreset.replace");
+    assert_eq!(preset(&mut d, "My Shorts").unwrap().preset.audio_tracks, 6);
+    assert_eq!(d.app().session.sequence_presets().iter().filter(|e| e.preset.name.eq_ignore_ascii_case("my shorts")).count(), 1);
+
+    // Restore Original from the preset's menu
+    d.ok("ui.click", json!({"id": format!("sequenceSettings.preset.{VERTICAL}"), "button": "right"}));
+    d.frames(3);
+    d.click("sequenceSettings.presetMenu.restore");
+    let e = preset(&mut d, VERTICAL).unwrap();
+    assert!(!e.modified);
+    assert_eq!(e.preset.video_tracks, 3);
+
+    // OK makes the sequence from the picked preset's settings
+    d.click("sequenceSettings.ok");
+    let q = d.app().session.active_sequence().unwrap().clone();
+    assert_eq!((q.settings.width, q.settings.height, q.video_tracks.len(), q.audio_tracks.len()), (1080, 1920, 1, 6));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -812,6 +886,7 @@ fn new_sequence_stays_open_on_invalid_frame_size() {
         (s.width, s.height) = (20_000, 20_000);
     }
     d.frames(2);
+    d.click("sequenceSettings.tab.general");
     d.click("sequenceSettings.ok");
     d.frames(2);
     assert_eq!(d.app().session.project.sequences().count(), n0, "nothing is made");

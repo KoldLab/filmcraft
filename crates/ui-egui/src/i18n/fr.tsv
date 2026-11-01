@@ -3561,3 +3561,23 @@
 	Export the labels to a preset file…	Exporter les étiquettes dans un fichier de paramètre prédéfini…
 	Show the presets folder	Afficher le dossier des paramètres prédéfinis
 	Delete this preset	Supprimer ce paramètre prédéfini
+	(customized)	(personnalisé)
+	Preset Name:	Nom du préréglage :
+	Replace	Remplacer
+	Save as Preset…	Enregistrer comme préréglage…
+	Save these settings to “{name}”	Enregistrer ces paramètres dans « {name} »
+	Sequence presets	Préréglages de séquence
+	Update Preset	Mettre à jour le préréglage
+	“{name}” already exists. Replace it?	« {name} » existe déjà. Le remplacer ?
+	1080p 23.976 fps	1080p 23,976 i/s
+	1080p 25 fps	1080p 25 i/s
+	1080p 30 fps	1080p 30 i/s
+	4K UHD 25 fps	4K UHD 25 i/s
+	Vertical 1080 × 1920 30 fps	Vertical 1080 × 1920 30 i/s
+	Square 1080 × 1080 30 fps	Carré 1080 × 1080 30 i/s
+	Full HD 1920 × 1080 at 23.976 fps, the usual film-look rate.	Full HD 1920 × 1080 à 23,976 i/s, la cadence habituelle pour un rendu cinéma.
+	Full HD 1920 × 1080 at 25 fps (PAL regions).	Full HD 1920 × 1080 à 25 i/s (régions PAL).
+	Full HD 1920 × 1080 at 30 fps, common for web and screen recordings.	Full HD 1920 × 1080 à 30 i/s, courant pour le web et les captures d'écran.
+	Ultra HD 3840 × 2160 at 25 fps.	Ultra HD 3840 × 2160 à 25 i/s.
+	Vertical 9:16 for Reels, Shorts and TikTok, at 30 fps.	Vertical 9:16 pour Reels, Shorts et TikTok, à 30 i/s.
+	Square 1:1 for social feeds, at 30 fps.	Carré 1:1 pour les fils des réseaux sociaux, à 30 i/s.

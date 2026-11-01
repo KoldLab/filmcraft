@@ -1,9 +1,12 @@
 //! Sequence ▸ Sequence Settings…, laid out as Premiere Pro's dialog: General, Color Management and
 //! VR Properties tabs, Cancel / OK.
 //!
-//! File ▸ New ▸ Sequence… opens the same dialog as New Sequence ([`open_new`]): the General tab
-//! starting from the default settings, and a Tracks tab with the number of video and audio
-//! tracks (`tracks.video`, `tracks.audio`); OK runs `file.newSequence`.
+//! File ▸ New ▸ Sequence… opens the same dialog as New Sequence ([`open_new`]): a Presets tab
+//! (`filmcraft_engine::sequence_presets`; the first preset is picked when it opens), the General
+//! tab, and a Tracks tab with the number of video and audio tracks (`tracks.video`,
+//! `tracks.audio`); OK runs `file.newSequence`. "Save as Preset…" saves the settings under a new
+//! name (asking before replacing one), "Update Preset" overwrites the picked preset with them (a
+//! built-in one is overridden; its menu's "Restore Original" brings it back).
 //!
 //! What it changes (one `sequence.settings` command, one undo step): Timebase, Frame Size (with
 //! "Scale motion effects proportionally when changing frame size", on by default), drop-frame or
@@ -24,16 +27,21 @@
 //! (+ `sampleRate.option.<hz>`), `audioDisplay`, `previewFormat`, `previewCodec`, `previewWidth`,
 //! `previewHeight`, `maxBitDepth`, `maxRenderQuality`, `linearColor`; Color Management:
 //! `workingSpace` (+ `workingSpace.option.<id>`), `wideGamut`, `autoToneMap`; VR Properties:
-//! `vr.projection`, `vr.layout`, `vr.horizontal`, `vr.vertical`; `ok`, `cancel`.
+//! `vr.projection`, `vr.layout`, `vr.horizontal`, `vr.vertical`; Presets: `preset.<name>`,
+//! `presetMenu.<delete|restore|export>`, `presetImport`, `savePreset` (+ `savePreset.name`,
+//! `savePreset.description`, `savePreset.ok`, `savePreset.replace`, `savePreset.cancel`),
+//! `updatePreset`; `ok`, `cancel`.
 
 use filmcraft_color::WorkingSpace;
+use filmcraft_engine::sequence_presets::{SequencePreset, SequencePresetEntry};
 use filmcraft_project::{AudioChannels, SequenceSettings};
 use filmcraft_time::FrameRate;
 use serde_json::{Map, Value, json};
 
 use crate::FilmcraftApp;
 use crate::i18n::t;
-use crate::state::SequenceSettingsDraft;
+use crate::native_dialogs::FileDialog;
+use crate::state::{PresetNameDraft, SequenceSettingsDraft};
 
 const NOT_YET: &str = "Not supported in FilmCraft yet";
 const LINEAR: &str = "FilmCraft always composites in linear light";
@@ -91,17 +99,21 @@ pub fn open(app: &mut FilmcraftApp) {
         working_space: st.color.working.id().into(),
         wide_gamut: st.color.wide_gamut,
         auto_tone_map: st.color.auto_tone_map,
+        ..Default::default()
     };
     app.dialog = Some(crate::Dialog::SequenceSettings);
 }
 
-/// File ▸ New ▸ Sequence…: the dialog as New Sequence, from the default settings, named like
-/// `file.newSequence` would name it, with three video and three audio tracks.
+/// File ▸ New ▸ Sequence…: the dialog as New Sequence on its Presets tab, from the first preset
+/// (the default settings unless the user overrode it), named like `file.newSequence` would name
+/// it.
 pub fn open_new(app: &mut FilmcraftApp) {
     let st = SequenceSettings::default();
     let n = app.session.project.sequences().count() + 1;
+    let presets = app.session.sequence_presets();
+    let first = presets.first().map(|e| e.preset.clone());
     app.ui.sequence_settings = SequenceSettingsDraft {
-        tab: "general".into(),
+        tab: "presets".into(),
         new_sequence: true,
         video_tracks: 3,
         audio_tracks: 3,
@@ -118,7 +130,12 @@ pub fn open_new(app: &mut FilmcraftApp) {
         wide_gamut: st.color.wide_gamut,
         auto_tone_map: st.color.auto_tone_map,
         name: format!("Sequence {n:02}"),
+        presets: Some(presets),
+        ..Default::default()
     };
+    if let Some(p) = first {
+        apply_preset(&mut app.ui.sequence_settings, &p);
+    }
     app.dialog = Some(crate::Dialog::SequenceSettings);
 }
 
@@ -155,6 +172,249 @@ fn tracks(ui: &mut egui::Ui, d: &mut SequenceSettingsDraft, elems: &mut Elems) {
             ui.label(tl!("tracks"));
         });
     }
+}
+
+/// Give the draft a preset's settings and pick the preset (the sequence name stays).
+fn apply_preset(d: &mut SequenceSettingsDraft, p: &SequencePreset) {
+    d.width = p.width;
+    d.height = p.height;
+    d.fps_num = p.fps_num;
+    d.fps_den = p.fps_den;
+    d.drop_frame = p.drop_frame;
+    d.mix = p.mix.clone();
+    d.sample_rate = p.sample_rate;
+    d.max_render_quality = p.max_render_quality;
+    d.video_tracks = p.video_tracks;
+    d.audio_tracks = p.audio_tracks;
+    d.preset = p.name.clone();
+}
+
+/// The draft's settings as a preset called `name`.
+fn draft_preset(d: &SequenceSettingsDraft, name: &str, description: &str) -> SequencePreset {
+    let r = rate(d);
+    SequencePreset {
+        name: name.into(),
+        description: description.into(),
+        width: d.width,
+        height: d.height,
+        fps_num: r.num,
+        fps_den: r.den,
+        drop_frame: d.drop_frame && r.supports_drop_frame(),
+        mix: d.mix.clone(),
+        sample_rate: d.sample_rate,
+        max_render_quality: d.max_render_quality,
+        video_tracks: d.video_tracks.min(256),
+        audio_tracks: d.audio_tracks.min(256),
+    }
+}
+
+/// The picked preset, as listed.
+fn picked(d: &SequenceSettingsDraft) -> Option<&SequencePresetEntry> {
+    d.presets.as_ref()?.iter().find(|e| e.preset.name == d.preset)
+}
+
+/// Whether the settings were changed since the preset was picked ("Update Preset" saves them).
+fn preset_changed(d: &SequenceSettingsDraft) -> bool {
+    picked(d).is_some_and(|e| !draft_preset(d, "", "").same_settings(&e.preset))
+}
+
+/// What the Presets tab and the preset buttons ask for, run once the dialog is drawn.
+enum PresetAction {
+    Pick(SequencePreset),
+    Delete(String),
+    /// Delete the user's override of a built-in preset.
+    Restore(String),
+    Export(String),
+    Import,
+    /// Save as Preset: name, description, replace a preset of that name.
+    Save(String, String, bool),
+    Update,
+}
+
+/// The Presets tab of New Sequence: the presets on the left (click to use one; right-click to
+/// delete, restore or export), the picked preset's description and settings on the right.
+fn presets_tab(ui: &mut egui::Ui, d: &SequenceSettingsDraft, dim: egui::Color32, elems: &mut Elems, action: &mut Option<PresetAction>) {
+    let list = d.presets.clone().unwrap_or_default();
+    let changed = preset_changed(d);
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(250.0);
+            egui::ScrollArea::vertical().id_salt("seq-presets-list").max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {
+                for e in &list {
+                    let name = &e.preset.name;
+                    let mut label = t(name).to_string();
+                    if e.modified {
+                        label = format!("{label} {}", tl!("(customized)"));
+                    }
+                    if changed && d.preset == *name {
+                        label.push_str(" *");
+                    }
+                    let r = ui.add(egui::Button::selectable(d.preset == *name, label).min_size(egui::vec2(ui.available_width(), 0.0)));
+                    elems.push((format!("sequenceSettings.preset.{name}"), r.rect, name.clone()));
+                    if r.clicked() {
+                        *action = Some(PresetAction::Pick(e.preset.clone()));
+                    }
+                    r.context_menu(|ui| {
+                        let items = [
+                            (!e.builtin, "delete", tl!("Delete Preset"), PresetAction::Delete(name.clone())),
+                            (e.modified, "restore", tl!("Restore Original"), PresetAction::Restore(name.clone())),
+                            (true, "export", tl!("Export Preset…"), PresetAction::Export(name.clone())),
+                        ];
+                        for (shown, id, label, a) in items {
+                            if !shown {
+                                continue;
+                            }
+                            let b = ui.button(label);
+                            elems.push((format!("sequenceSettings.presetMenu.{id}"), b.rect, label.to_string()));
+                            if b.clicked() {
+                                *action = Some(a);
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+            });
+            ui.add_space(4.0);
+            let r = ui.button(tl!("Import Presets…"));
+            elems.push(("sequenceSettings.presetImport".into(), r.rect, "Import".into()));
+            if r.clicked() {
+                *action = Some(PresetAction::Import);
+            }
+        });
+        // a vertical separator would stretch the window to the screen's height
+        ui.add_space(16.0);
+        ui.vertical(|ui| {
+            let Some(e) = picked(d) else { return };
+            ui.label(egui::RichText::new(t(&e.preset.name)).strong());
+            if !e.preset.description.is_empty() {
+                ui.add(egui::Label::new(egui::RichText::new(t(&e.preset.description)).color(dim)).wrap());
+            }
+            ui.add_space(8.0);
+            let r = rate(d);
+            egui::Grid::new("seq-preset-details").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
+                for (label, value) in [
+                    ("Frame Size:", format!("{} × {}  ({})", d.width, d.height, aspect(d.width, d.height))),
+                    ("Timebase:", timebase_label(r)),
+                    ("Channel Format:", t(&d.mix).to_string()),
+                    ("Sample Rate:", format!("{} Hz", d.sample_rate)),
+                    ("Video:", format!("{} {}", d.video_tracks, tl!("tracks"))),
+                    ("Audio:", format!("{} {}", d.audio_tracks, tl!("tracks"))),
+                ] {
+                    ui.label(egui::RichText::new(t(label)).color(dim));
+                    ui.label(value);
+                    ui.end_row();
+                }
+            });
+        });
+    });
+}
+
+/// New Sequence's "Save as Preset" prompt: name and description, then Save (or Replace when the
+/// name is taken, after asking).
+fn save_prompt(ui: &mut egui::Ui, d: &mut SequenceSettingsDraft, elems: &mut Elems, action: &mut Option<PresetAction>) {
+    let Some(mut s) = d.save_as.clone() else { return };
+    let taken = |name: &str| d.presets.as_ref().is_some_and(|l| l.iter().any(|e| e.preset.name.eq_ignore_ascii_case(name.trim())));
+    let mut close = false;
+    ui.group(|ui| {
+        ui.set_width(ui.available_width());
+        egui::Grid::new("seq-preset-save").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+            ui.label(tl!("Preset Name:"));
+            let r = ui.add(egui::TextEdit::singleline(&mut s.name).desired_width(320.0));
+            if r.changed() {
+                s.confirm_replace = false;
+            }
+            elems.push(("sequenceSettings.savePreset.name".into(), r.rect, s.name.clone()));
+            ui.end_row();
+            ui.label(tl!("Description:"));
+            let r = ui.add(egui::TextEdit::singleline(&mut s.description).desired_width(320.0));
+            elems.push(("sequenceSettings.savePreset.description".into(), r.rect, s.description.clone()));
+            ui.end_row();
+        });
+        ui.horizontal(|ui| {
+            let name = s.name.trim().to_string();
+            if s.confirm_replace {
+                ui.label(tlf!("“{name}” already exists. Replace it?", name = t(&name)));
+                let r = ui.button(tl!("Replace"));
+                elems.push(("sequenceSettings.savePreset.replace".into(), r.rect, "Replace".into()));
+                if r.clicked() {
+                    *action = Some(PresetAction::Save(name, s.description.trim().to_string(), true));
+                }
+            } else {
+                let r = ui.add_enabled(!name.is_empty(), egui::Button::new(tl!("Save")));
+                elems.push(("sequenceSettings.savePreset.ok".into(), r.rect, "Save".into()));
+                if r.clicked() {
+                    if taken(&name) {
+                        s.confirm_replace = true;
+                    } else {
+                        *action = Some(PresetAction::Save(name, s.description.trim().to_string(), false));
+                    }
+                }
+            }
+            let c = ui.button(tl!("Cancel"));
+            elems.push(("sequenceSettings.savePreset.cancel".into(), c.rect, "Cancel".into()));
+            close = c.clicked();
+        });
+    });
+    d.save_as = if close { None } else { Some(s) };
+}
+
+/// Run a preset action on the draft `d` (the presets are listed again after a change).
+fn run_preset_action(app: &mut FilmcraftApp, d: &mut SequenceSettingsDraft, a: PresetAction) {
+    let r = match a {
+        PresetAction::Pick(p) => {
+            apply_preset(d, &p);
+            return;
+        }
+        PresetAction::Delete(name) => app.session.execute("sequence.deletePreset", json!({"name": name})).map(|_| {
+            if d.preset == name {
+                d.preset.clear();
+            }
+        }),
+        PresetAction::Restore(name) => app.session.execute("sequence.deletePreset", json!({"name": name})).map(|_| {
+            if d.preset == name
+                && let Some(e) = app.session.sequence_presets().into_iter().find(|e| e.preset.name == name)
+            {
+                apply_preset(d, &e.preset);
+            }
+        }),
+        PresetAction::Export(name) => {
+            app.pick_ui(FileDialog::save_as(tl!("Sequence presets"), &["json"], &format!("{name}.json")), move |app, paths| {
+                let Some(path) = paths.into_iter().next() else { return };
+                if let Err(e) = app.session.execute("sequence.exportPreset", json!({"name": name, "path": path})) {
+                    app.ui.status = e.to_string();
+                }
+            });
+            return;
+        }
+        PresetAction::Import => {
+            app.pick_ui(FileDialog::open_file(tl!("Sequence presets"), &["json"]), |app, paths| {
+                let Some(path) = paths.into_iter().next() else { return };
+                if let Err(e) = app.session.execute("sequence.importPreset", json!({"path": path})) {
+                    app.ui.status = e.to_string();
+                }
+                app.ui.sequence_settings.presets = None;
+            });
+            return;
+        }
+        PresetAction::Save(name, description, overwrite) => {
+            let mut p = serde_json::to_value(draft_preset(d, &name, &description)).unwrap_or_default();
+            p["overwrite"] = json!(overwrite);
+            app.session.execute("sequence.savePreset", p).map(|v| {
+                d.preset = v["name"].as_str().unwrap_or(&name).to_string();
+                d.save_as = None;
+            })
+        }
+        PresetAction::Update => {
+            let Some(e) = picked(d) else { return };
+            let mut p = serde_json::to_value(draft_preset(d, &e.preset.name, &e.preset.description)).unwrap_or_default();
+            p["overwrite"] = json!(true);
+            app.session.execute("sequence.savePreset", p).map(|_| ())
+        }
+    };
+    if let Err(e) = r {
+        app.ui.status = e.to_string();
+    }
+    d.presets = Some(app.session.sequence_presets());
 }
 
 fn rate(d: &SequenceSettingsDraft) -> FrameRate {
@@ -474,7 +734,12 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
     };
     let audio_samples = app.session.project.settings.audio_display_samples;
     let accent = app.tokens.accent;
+    let dim = app.tokens.text_dim;
+    if new_sequence && app.ui.sequence_settings.presets.is_none() {
+        app.ui.sequence_settings.presets = Some(app.session.sequence_presets());
+    }
     let mut d = app.ui.sequence_settings.clone();
+    let mut preset_action = None;
     crate::widgets::revert_drag_on_escape(ctx, egui::Id::new("sequence-settings-before-drag"), &mut d);
     let mut keep = true;
     let mut apply = false;
@@ -482,7 +747,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
     let max_h = ctx.content_rect().height() * 0.8;
     let title = if new_sequence { tl!("New Sequence") } else { tl!("Sequence Settings") };
     let tabs: &[(&str, &str)] = if new_sequence {
-        &[("general", "General"), ("tracks", "Tracks")]
+        &[("presets", "Presets"), ("general", "General"), ("tracks", "Tracks")]
     } else {
         &[("general", "General"), ("color", "Color Management"), ("vr", "VR Properties")]
     };
@@ -506,11 +771,15 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
             ui.separator();
             egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| match d.tab.as_str() {
                 "color" if !new_sequence => color(ui, &mut d, &mut elems),
+                "presets" if new_sequence => presets_tab(ui, &d, dim, &mut elems, &mut preset_action),
                 "tracks" if new_sequence => tracks(ui, &mut d, &mut elems),
                 "vr" if !new_sequence => vr(ui, &mut elems),
                 _ => general(ui, &mut d, &cur, audio_samples, &mut elems),
             });
             ui.add_space(10.0);
+            if new_sequence {
+                save_prompt(ui, &mut d, &mut elems, &mut preset_action);
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let o = ui.add(egui::Button::new(egui::RichText::new(tl!("OK")).color(egui::Color32::WHITE)).fill(accent));
                 elems.push(("sequenceSettings.ok".into(), o.rect, "OK".into()));
@@ -522,15 +791,37 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
                 if c.clicked() {
                     keep = false;
                 }
+                if new_sequence {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let r = ui.add_enabled(d.save_as.is_none(), egui::Button::new(tl!("Save as Preset…")));
+                        elems.push(("sequenceSettings.savePreset".into(), r.rect, "Save as Preset".into()));
+                        if r.clicked() {
+                            d.save_as = Some(PresetNameDraft::default());
+                        }
+                        let r = ui
+                            .add_enabled(preset_changed(&d) && d.save_as.is_none(), egui::Button::new(tl!("Update Preset")))
+                            .on_hover_text(tlf!("Save these settings to “{name}”", name = t(&d.preset)));
+                        elems.push(("sequenceSettings.updatePreset".into(), r.rect, "Update Preset".into()));
+                        if r.clicked() {
+                            preset_action = Some(PresetAction::Update);
+                        }
+                    });
+                }
             });
         });
     for (id, r, l) in elems {
         app.auto.add(&id, r, &l);
     }
-    if crate::widgets::escape_closes(ctx) {
-        keep = false;
+    if let Some(a) = preset_action {
+        run_preset_action(app, &mut d, a);
     }
-    if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !ctx.egui_wants_keyboard_input() {
+    if crate::widgets::escape_closes(ctx) {
+        // Escape closes the Save as Preset prompt first
+        if d.save_as.take().is_none() {
+            keep = false;
+        }
+    }
+    if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !ctx.egui_wants_keyboard_input() && d.save_as.is_none() {
         apply = true;
     }
     if apply && new_sequence {

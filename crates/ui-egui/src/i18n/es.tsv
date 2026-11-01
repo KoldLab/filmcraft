@@ -3585,3 +3585,23 @@
 	Export the labels to a preset file…	Exportar las etiquetas a un archivo de ajuste preestablecido…
 	Show the presets folder	Mostrar la carpeta de ajustes preestablecidos
 	Delete this preset	Eliminar este ajuste preestablecido
+	(customized)	(personalizado)
+	Preset Name:	Nombre del ajuste preestablecido:
+	Replace	Reemplazar
+	Save as Preset…	Guardar como ajuste preestablecido…
+	Save these settings to “{name}”	Guardar estos ajustes en “{name}”
+	Sequence presets	Ajustes preestablecidos de secuencia
+	Update Preset	Actualizar ajuste preestablecido
+	“{name}” already exists. Replace it?	“{name}” ya existe. ¿Reemplazarlo?
+	1080p 23.976 fps	1080p 23,976 fps
+	1080p 25 fps	1080p 25 fps
+	1080p 30 fps	1080p 30 fps
+	4K UHD 25 fps	4K UHD 25 fps
+	Vertical 1080 × 1920 30 fps	Vertical 1080 × 1920 30 fps
+	Square 1080 × 1080 30 fps	Cuadrado 1080 × 1080 30 fps
+	Full HD 1920 × 1080 at 23.976 fps, the usual film-look rate.	Full HD 1920 × 1080 a 23,976 fps, la cadencia habitual para un aspecto cinematográfico.
+	Full HD 1920 × 1080 at 25 fps (PAL regions).	Full HD 1920 × 1080 a 25 fps (regiones PAL).
+	Full HD 1920 × 1080 at 30 fps, common for web and screen recordings.	Full HD 1920 × 1080 a 30 fps, habitual para web y grabaciones de pantalla.
+	Ultra HD 3840 × 2160 at 25 fps.	Ultra HD 3840 × 2160 a 25 fps.
+	Vertical 9:16 for Reels, Shorts and TikTok, at 30 fps.	Vertical 9:16 para Reels, Shorts y TikTok, a 30 fps.
+	Square 1:1 for social feeds, at 30 fps.	Cuadrado 1:1 para redes sociales, a 30 fps.

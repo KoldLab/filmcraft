@@ -3587,3 +3587,11 @@
 	Export the labels to a preset file…	ラベルをプリセットファイルに書き出し…
 	Show the presets folder	プリセットフォルダーを表示
 	Delete this preset	このプリセットを削除
+	(customized)	（カスタマイズ済み）
+	Preset Name:	プリセット名：
+	Replace	置き換え
+	Save as Preset…	プリセットとして保存…
+	Save these settings to “{name}”	この設定を「{name}」に保存
+	Sequence presets	シーケンスプリセット
+	Update Preset	プリセットを更新
+	“{name}” already exists. Replace it?	「{name}」は既に存在します。置き換えますか？

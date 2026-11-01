@@ -867,6 +867,23 @@ pub struct SequenceSettingsDraft {
     pub working_space: String,
     pub wide_gamut: bool,
     pub auto_tone_map: bool,
+    /// New Sequence ▸ Presets: the preset picked (its name), which "Update Preset" overwrites.
+    pub preset: String,
+    /// The "Save as Preset" prompt while open: the name and description typed.
+    pub save_as: Option<PresetNameDraft>,
+    /// The presets as listed (`sequence.presets`), read when the dialog opens or they change.
+    #[serde(skip)]
+    pub presets: Option<Vec<filmcraft_engine::sequence_presets::SequencePresetEntry>>,
+}
+
+/// New Sequence ▸ Save as Preset…: the name and description, and whether the name is taken and
+/// waits for "Replace".
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PresetNameDraft {
+    pub name: String,
+    pub description: String,
+    pub confirm_replace: bool,
 }
 
 impl Default for SequenceSettingsDraft {
@@ -889,6 +906,9 @@ impl Default for SequenceSettingsDraft {
             working_space: "rec709".into(),
             wide_gamut: false,
             auto_tone_map: true,
+            preset: String::new(),
+            save_as: None,
+            presets: None,
         }
     }
 }
